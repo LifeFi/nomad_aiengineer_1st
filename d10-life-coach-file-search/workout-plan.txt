@@ -1,0 +1,59 @@
+
+## 운동 목표
+- @ updated at [[2025-03-26(수)]]
+- 
+- ### 러닝
+	- 목표: **[ ~ 2025-06-30(월) ]**
+		- 💎 10K - 페이스 (paceOf10k:: 429),  `$=const distance = 10;const pace = dv.current().paceOf10k;const paceMin = Math.floor(pace / 100);const paceSec = pace % 100;const paceHour = paceMin / 60 + paceSec / 3600;const time = distance * paceHour;const h = Math.floor(time);const m = Math.floor((time - h) * 60);const s = Math.floor(((time - h) * 60 - m) * 60);const formatted = h + ":" +  String(m).padStart(2, '0') + ":" + String(s).padStart(2, '0');formatted;`
+		- 💎 하프 - 페이스 (paceOfHalf:: 444), `$=const distance = 21.0975;const pace = dv.current().paceOfHalf;const paceMin = Math.floor(pace / 100);const paceSec = pace % 100;const paceHour = paceMin / 60 + paceSec / 3600;const time = distance * paceHour;const h = Math.floor(time);const m = Math.floor((time - h) * 60);const s = Math.floor(((time - h) * 60 - m) * 60);const formatted = h + ":" +  String(m).padStart(2, '0') + ":" + String(s).padStart(2, '0');formatted;` 
+		- 💎 VO2MAX 53+
+		- ! 체중 67kg ( BMI 21.6 ) : 기록보다는, 부상 방지 위함.
+	- 
+	- 목표: 최종
+		- 10K - 00:39 / 400 페이스
+		- 하프 - 01:30 / 415 페이스
+		- 풀 - 03:30 / 500 페이스
+		- VO2MAX 60+
+	- 
+	- 기간
+		- ! ~ 2025-06-30(월)
+	- 
+	- 훈련
+		- 공통
+			- 야외 마무리 운동시 : 100 전력 x 3회
+			- 10k 이상시, 마지막 3k 빌드업주. ( 1km 마다 페이스 30씩 올리기 )
+				- 3K ~ 9까지는 1k 만.
+			- 야외 평행봉
+		- 기본
+			- 조깅 / 5k ~ 10k, **600 페이스**
+			- Long Slow Distance / LSD / 22k 이상 / **630 페이스**
+			- Active Recovery Run / 회복주 / 3k ~ 5k / **700 페이스**
+				- !! ❌ 회복을 위한 달리기 
+				- ! ⭕️ 회복중에 하는 달리기
+			- Time Trial / TT / 5k
+		- 주간
+			- ! 월 / 레이스 / 10k / 430 ~ 500
+			- 화 / 조깅 / 5k
+			- ! 수 / 조깅 / 10k 
+			- ! 목 / 트레일 or 언덕 or 등산 or 계단 / 금토산, 청계산
+			- 금 / 조깅 / 5k
+			- ! 토 / LSD / 20~35k
+			- 일 / 회복주 / 5k
+		- 월간
+			- ! 매월 첫번째 월요일 / TT / 3k or 5k
+		- 
+
+- ### 풀업
+	- 목표
+		- 💎 30개
+		- 💎 머슬업
+	- 훈련
+		- ! 1단계. 최대치 x 5세트 : 쉬는 시간, 3~5분
+			- 최대치를 20개까지 늘리고, 10 x 10 도전하자.
+		- 
+		- 매달리기 1분 x 3세트
+		- 
+		- 2단계. 10회 x 10세트 : 쉬는 시간, 1분30초
+			- ! 7 x 10 로 먼저 스타트.
+			- ! 안되면, 8 x 10 or 7 x 15 식으로 해본다.
+
