@@ -12,3 +12,6 @@ wheels/
 .env*
 
 # temp resource
+
+# Agents
+.claude*
