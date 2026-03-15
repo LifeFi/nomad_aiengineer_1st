@@ -34,15 +34,27 @@ def get_chat_session_id(cookies: CookieManager) -> str:
 
 
 def configure_openai_api_key() -> None:
-    api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    api_key = (
+        st.session_state.get("openai_api_key", "").strip()
+        or st.secrets.get("OPENAI_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+    )
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not found")
+        st.sidebar.error(
+            "OpenAI API Key를 입력하거나 환경 변수/Secrets를 설정해 주세요."
+        )
+        st.stop()
 
     os.environ["OPENAI_API_KEY"] = api_key
 
 
+def has_bootstrap_api_key() -> bool:
+    return bool(st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"))
+
+
 def initialize_session_state() -> None:
     defaults = {
+        "openai_api_key": "",
         "customer_name": "고객",
         "party_size": 2,
         "dietary_restrictions": "",
@@ -57,13 +69,21 @@ configure_page()
 
 cookies = CookieManager()
 session_id = get_chat_session_id(cookies)
-configure_openai_api_key()
 initialize_session_state()
 
 st.title("🍽️ 레스토랑 AI 도우미")
 
-# 사이드바 - 고객 정보 입력
 with st.sidebar:
+    with st.expander("🔑 API 설정", expanded=not has_bootstrap_api_key()):
+        st.text_input(
+            "OpenAI API Key",
+            key="openai_api_key",
+            placeholder="sk-...",
+            help="여기에 입력한 키를 가장 먼저 사용합니다.",
+        )
+    st.divider()
+
+    # 사이드바 - 고객 정보 입력
     st.header("👤 고객 정보")
     st.text_input("이름", key="customer_name")
     st.number_input("인원수", min_value=1, max_value=20, key="party_size")
@@ -73,6 +93,8 @@ with st.sidebar:
         key="dietary_restrictions",
     )
     st.divider()
+
+configure_openai_api_key()
 
 
 # RestaurantContext 생성 (session_state에서 읽어 재렌더링 후에도 값 유지)
