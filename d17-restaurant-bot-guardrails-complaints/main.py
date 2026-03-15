@@ -33,19 +33,12 @@ def get_chat_session_id(cookies: CookieManager) -> str:
     return cookies["chat_session"]
 
 
-def configure_openai_api_key() -> None:
-    api_key = (
+def resolve_openai_api_key() -> str:
+    return (
         st.session_state.get("openai_api_key", "").strip()
         or st.secrets.get("OPENAI_API_KEY")
         or os.getenv("OPENAI_API_KEY")
     )
-    if not api_key:
-        st.sidebar.error(
-            "OpenAI API Key를 입력하거나 환경 변수/Secrets를 설정해 주세요."
-        )
-        st.stop()
-
-    os.environ["OPENAI_API_KEY"] = api_key
 
 
 def has_bootstrap_api_key() -> bool:
@@ -81,6 +74,9 @@ with st.sidebar:
             placeholder="sk-...",
             help="여기에 입력한 키를 가장 먼저 사용합니다.",
         )
+        sidebar_api_key = resolve_openai_api_key()
+        if not sidebar_api_key:
+            st.warning("OpenAI API Key를 입력하거나 환경 변수/Secrets를 설정해 주세요.")
     st.divider()
 
     # 사이드바 - 고객 정보 입력
@@ -94,7 +90,10 @@ with st.sidebar:
     )
     st.divider()
 
-configure_openai_api_key()
+api_key = resolve_openai_api_key()
+if not api_key:
+    st.stop()
+os.environ["OPENAI_API_KEY"] = api_key
 
 
 # RestaurantContext 생성 (session_state에서 읽어 재렌더링 후에도 값 유지)
