@@ -1,6 +1,6 @@
 import dotenv
+import os
 
-dotenv.load_dotenv()
 
 import asyncio
 import streamlit as st
@@ -12,6 +12,14 @@ from agents import (
 )
 from models import RestaurantContext
 from restaurant_agents.triage_agent import triage_agent
+
+
+api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+
+if api_key:
+    os.environ["OPENAI_API_KEY"] = api_key
+else:
+    raise RuntimeError("OPENAI_API_KEY not found")
 
 st.set_page_config(
     page_title="🍽️ Restaurant Bot",
@@ -131,16 +139,12 @@ async def run_agent(message):
             status_placeholder.info("input guardrail 작동")
             await asyncio.sleep(1.2)
             status_placeholder.empty()
-            fallback_message = (
-                "죄송합니다. 레스토랑 관련 문의만 도와드릴 수 있으며, 부적절한 표현에는 응답할 수 없습니다. 메뉴, 주문, 예약, 불만 처리와 관련해 말씀해 주세요."
-            )
+            fallback_message = "죄송합니다. 레스토랑 관련 문의만 도와드릴 수 있으며, 부적절한 표현에는 응답할 수 없습니다. 메뉴, 주문, 예약, 불만 처리와 관련해 말씀해 주세요."
             text_placeholder.write(fallback_message)
             st.session_state["ui_fallback_messages"].append(fallback_message)
         except OutputGuardrailTripwireTriggered:
             status_placeholder.empty()
-            fallback_message = (
-                "죄송합니다. 해당 요청에는 안전하고 정중한 방식으로만 안내드릴 수 있습니다. 레스토랑 이용, 주문, 예약, 불편 사항 해결과 관련된 내용으로 다시 말씀해 주세요."
-            )
+            fallback_message = "죄송합니다. 해당 요청에는 안전하고 정중한 방식으로만 안내드릴 수 있습니다. 레스토랑 이용, 주문, 예약, 불편 사항 해결과 관련된 내용으로 다시 말씀해 주세요."
             text_placeholder.write(fallback_message)
             st.session_state["ui_fallback_messages"].append(fallback_message)
 
