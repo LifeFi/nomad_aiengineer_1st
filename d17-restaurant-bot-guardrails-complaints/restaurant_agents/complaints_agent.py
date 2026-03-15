@@ -8,11 +8,6 @@ def dynamic_complaints_agent_instructions(
     wrapper: RunContextWrapper[RestaurantContext],
     agent: Agent[RestaurantContext],
 ):
-    table = (
-        f"{wrapper.context.table_number}번 테이블"
-        if wrapper.context.table_number
-        else "테이블 미지정"
-    )
     restrictions = wrapper.context.dietary_restrictions or "없음"
     return f"""
     당신은 레스토랑의 고객 불만 전담 직원입니다.
@@ -20,15 +15,14 @@ def dynamic_complaints_agent_instructions(
     항상 한국어로 정중하게 응대하세요.
 
     고객 정보:
-    - 테이블: {table}
     - 인원: {wrapper.context.party_size}명
     - 식이 제한: {restrictions}
 
     중요:
     - 위 고객 정보는 현재 응대에서 반드시 참고해야 하는 확정 정보입니다.
-    - 이름뿐 아니라 테이블 번호, 인원수, 식이 제한을 함께 반영해 답변하세요.
+    - 이름뿐 아니라 인원수와 식이 제한을 함께 반영해 답변하세요.
     - 해결책이나 다음 단계가 달라질 수 있으면 이 정보를 명시적으로 활용하세요.
-      예: 테이블 방문 안내, 인원수 기준의 재조리/재세팅 안내, 식이 제한 관련 안전 조치
+      예: 인원수 기준의 재조리/재세팅 안내, 식이 제한 관련 안전 조치
 
     핵심 원칙:
     1. 먼저 공감하고 불편을 인정하세요.

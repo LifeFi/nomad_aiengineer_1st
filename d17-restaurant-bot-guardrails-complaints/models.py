@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 class RestaurantContext(BaseModel):
     customer_name: str
-    table_number: Optional[int] = None
     party_size: Optional[int] = 1
     current_order: List[str] = Field(default_factory=list)
     dietary_restrictions: Optional[str] = None

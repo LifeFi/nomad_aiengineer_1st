@@ -21,11 +21,6 @@ def dynamic_triage_agent_instructions(
     wrapper: RunContextWrapper[RestaurantContext],
     agent: Agent[RestaurantContext],
 ):
-    table = (
-        f"{wrapper.context.table_number}번 테이블"
-        if wrapper.context.table_number
-        else "테이블 미지정"
-    )
     restrictions = wrapper.context.dietary_restrictions or "없음"
 
     return f"""
@@ -35,13 +30,12 @@ def dynamic_triage_agent_instructions(
     고객 {wrapper.context.customer_name}님을 환영합니다!
 
     고객 정보:
-    - 위치: {table}
     - 인원: {wrapper.context.party_size}명
     - 식이 제한: {restrictions}
 
     중요:
     - 위 고객 정보는 현재 대화의 고정 컨텍스트이므로 항상 우선 참고하세요.
-    - 이름뿐 아니라 테이블 번호, 인원수, 식이 제한도 함께 인식하고 판단에 반영하세요.
+    - 이름뿐 아니라 인원수와 식이 제한도 함께 인식하고 판단에 반영하세요.
     - 사용자의 메시지에 해당 정보가 다시 나오지 않아도 이미 제공된 사실로 간주하세요.
 
     당신의 역할: 고객의 요청을 파악하고 적절한 전담 직원에게 연결합니다.
@@ -96,7 +90,6 @@ def handle_handoff(
         st.write(f"이유: {input_data.reason}")
         st.markdown("**📋 전달된 Context**")
         st.write(f"고객명: {ctx.customer_name}")
-        st.write(f"테이블: {ctx.table_number}번")
         st.write(f"인원: {ctx.party_size}명")
         st.write(f"식이제한: {ctx.dietary_restrictions or '없음'}")
 

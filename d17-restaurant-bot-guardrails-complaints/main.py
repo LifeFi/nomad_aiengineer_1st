@@ -1,4 +1,3 @@
-import dotenv
 import os
 import uuid
 from streamlit_cookies_manager import CookieManager
@@ -16,47 +15,57 @@ from models import RestaurantContext
 from restaurant_agents.triage_agent import triage_agent
 
 
-cookies = CookieManager()
-
-if not cookies.ready():
-    st.stop()
-
-if "chat_session" not in cookies:
-    cookies["chat_session"] = str(uuid.uuid4())
-
-session_id = cookies["chat_session"]
+def configure_page() -> None:
+    st.set_page_config(
+        page_title="Restaurant Bot",
+        page_icon="🍽️",
+        layout="wide",
+    )
 
 
-api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+def get_chat_session_id(cookies: CookieManager) -> str:
+    if not cookies.ready():
+        st.stop()
 
-if api_key:
+    if "chat_session" not in cookies:
+        cookies["chat_session"] = str(uuid.uuid4())
+
+    return cookies["chat_session"]
+
+
+def configure_openai_api_key() -> None:
+    api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not found")
+
     os.environ["OPENAI_API_KEY"] = api_key
-else:
-    raise RuntimeError("OPENAI_API_KEY not found")
 
-st.set_page_config(
-    page_title="🍽️ Restaurant Bot",
-    page_icon="🍽️",
-    layout="wide",
-)
+
+def initialize_session_state() -> None:
+    defaults = {
+        "customer_name": "고객",
+        "party_size": 2,
+        "dietary_restrictions": "",
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+configure_page()
+
+cookies = CookieManager()
+session_id = get_chat_session_id(cookies)
+configure_openai_api_key()
+initialize_session_state()
 
 st.title("🍽️ 레스토랑 AI 도우미")
-
-# session_state 기본값 초기화 (재렌더링 시 위젯 값 보존)
-if "customer_name" not in st.session_state:
-    st.session_state["customer_name"] = "고객"
-if "table_number" not in st.session_state:
-    st.session_state["table_number"] = 1
-if "party_size" not in st.session_state:
-    st.session_state["party_size"] = 2
-if "dietary_restrictions" not in st.session_state:
-    st.session_state["dietary_restrictions"] = ""
 
 # 사이드바 - 고객 정보 입력
 with st.sidebar:
     st.header("👤 고객 정보")
     st.text_input("이름", key="customer_name")
-    st.number_input("테이블 번호", min_value=1, max_value=50, key="table_number")
     st.number_input("인원수", min_value=1, max_value=20, key="party_size")
     st.text_input(
         "식이 제한 (선택)",
@@ -69,7 +78,6 @@ with st.sidebar:
 # RestaurantContext 생성 (session_state에서 읽어 재렌더링 후에도 값 유지)
 restaurant_ctx = RestaurantContext(
     customer_name=st.session_state["customer_name"],
-    table_number=st.session_state["table_number"],
     party_size=st.session_state["party_size"],
     dietary_restrictions=st.session_state["dietary_restrictions"] or None,
 )
@@ -77,17 +85,16 @@ restaurant_ctx = RestaurantContext(
 
 def build_contextual_user_message(message: str, context: RestaurantContext) -> str:
     restrictions = context.dietary_restrictions or "없음"
-    table = f"{context.table_number}번" if context.table_number else "미지정"
     return f"""
 [고객 프로필]
 - 이름: {context.customer_name}
-- 테이블 번호: {table}
 - 인원수: {context.party_size}명
 - 식이 제한: {restrictions}
 
 [사용자 메시지]
 {message}
 """.strip()
+
 
 # 세션 초기화
 if "restaurant_session" not in st.session_state:
