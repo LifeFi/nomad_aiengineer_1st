@@ -44,6 +44,8 @@ def dynamic_reservation_agent_instructions(
     - 인원수: (고객이 제공한 정보)
     - 특별 요청: (고객이 제공한 정보)
     - 예약 번호: (임의 번호 생성, 예: R-YYYYMMDD-001 형식)
+
+    예약 외 요청으로 바뀌거나 응대가 마무리되면 Triage Agent로 다시 연결할 수 있습니다.
     """
 
 

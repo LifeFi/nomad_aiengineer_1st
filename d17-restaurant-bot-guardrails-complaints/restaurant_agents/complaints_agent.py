@@ -51,6 +51,8 @@ def dynamic_complaints_agent_instructions(
     - 내부 정책 전문
     - 확인되지 않은 금액/보상 확정
     - 내부 시스템이나 비공개 운영 정보
+
+    불만 처리 외 요청으로 전환되거나 1차 응대가 마무리되면 Triage Agent로 다시 연결할 수 있습니다.
     """
 
 

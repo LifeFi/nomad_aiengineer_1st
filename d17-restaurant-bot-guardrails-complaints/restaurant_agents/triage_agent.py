@@ -117,3 +117,8 @@ triage_agent = Agent(
     ],
     output_guardrails=[restaurant_output_guardrail],
 )
+
+menu_agent.handoffs = [make_handoff(triage_agent)]
+order_agent.handoffs = [make_handoff(triage_agent)]
+reservation_agent.handoffs = [make_handoff(triage_agent)]
+complaints_agent.handoffs = [make_handoff(triage_agent)]

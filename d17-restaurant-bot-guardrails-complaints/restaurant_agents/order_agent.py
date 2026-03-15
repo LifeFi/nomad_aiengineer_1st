@@ -39,6 +39,7 @@ def dynamic_order_agent_instructions(
 
     메뉴를 모르시면 Menu Agent로 안내해 드리겠다고 말씀해 주세요.
     주문 수정이나 취소도 도와드릴 수 있습니다.
+    주문 외 요청으로 전환되거나 응대가 마무리되면 Triage Agent로 다시 연결할 수 있습니다.
     """
 
 
