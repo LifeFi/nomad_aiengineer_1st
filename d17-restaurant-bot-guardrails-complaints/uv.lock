@@ -271,6 +271,7 @@ dependencies = [
     { name = "openai-agents", extra = ["viz"] },
     { name = "python-dotenv" },
     { name = "streamlit" },
+    { name = "streamlit-cookies-manager" },
 ]
 
 [package.dev-dependencies]
@@ -284,6 +285,7 @@ requires-dist = [
     { name = "openai-agents", extras = ["viz"], specifier = ">=0.2.6" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "streamlit", specifier = ">=1.48.0" },
+    { name = "streamlit-cookies-manager", specifier = ">=0.2.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1475,6 +1477,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/92/8e/f2b8b4fa8ba65aae251170c54f8ce198fb588fc348301c2b624f8c63efac/streamlit-1.55.0.tar.gz", hash = "sha256:015e512bbd02d000f4047e51118dc086b70e7d9c46b4a11a33c2509731379626", size = 8612008, upload-time = "2026-03-03T22:26:02.149Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/e6/412c1e1f200ca8c32ecf10201839183e261ad61ced3ede34a66f6d4be3cf/streamlit-1.55.0-py3-none-any.whl", hash = "sha256:1e4a16449c6131696180f4ddb40ea8c51834e89c2a43e1b0362bc9b1cfd9b415", size = 9075714, upload-time = "2026-03-03T22:25:59.126Z" },
+]
+
+[[package]]
+name = "streamlit-cookies-manager"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/15/d016f1b2e1c547fecf7782dac3860d2aad4e22b4c1664d78bb2a873163ef/streamlit-cookies-manager-0.2.0.tar.gz", hash = "sha256:498531778bd4a63267364e8986b3774319d3ba2f4ba65a92357196723966e4d4", size = 680070, upload-time = "2021-12-25T13:42:42.064Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/60/d4aefff016f9fe48d10c59b2e52ae823444525f973e7948821c9eefb4217/streamlit_cookies_manager-0.2.0-py3-none-any.whl", hash = "sha256:12503dc3367dfc2a780cb9e4a81ad791737806a7b9d1c25a006386e32aabe956", size = 690962, upload-time = "2021-12-25T13:42:46.493Z" },
 ]
 
 [[package]]

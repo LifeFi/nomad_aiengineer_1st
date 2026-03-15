@@ -1,5 +1,7 @@
 import dotenv
 import os
+import uuid
+from streamlit_cookies_manager import CookieManager
 
 
 import asyncio
@@ -12,6 +14,17 @@ from agents import (
 )
 from models import RestaurantContext
 from restaurant_agents.triage_agent import triage_agent
+
+
+cookies = CookieManager()
+
+if not cookies.ready():
+    st.stop()
+
+if "chat_session" not in cookies:
+    cookies["chat_session"] = str(uuid.uuid4())
+
+session_id = cookies["chat_session"]
 
 
 api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -61,10 +74,25 @@ restaurant_ctx = RestaurantContext(
     dietary_restrictions=st.session_state["dietary_restrictions"] or None,
 )
 
+
+def build_contextual_user_message(message: str, context: RestaurantContext) -> str:
+    restrictions = context.dietary_restrictions or "없음"
+    table = f"{context.table_number}번" if context.table_number else "미지정"
+    return f"""
+[고객 프로필]
+- 이름: {context.customer_name}
+- 테이블 번호: {table}
+- 인원수: {context.party_size}명
+- 식이 제한: {restrictions}
+
+[사용자 메시지]
+{message}
+""".strip()
+
 # 세션 초기화
 if "restaurant_session" not in st.session_state:
     st.session_state["restaurant_session"] = SQLiteSession(
-        "restaurant-chat",
+        session_id,
         "restaurant-memory.db",
     )
 session = st.session_state["restaurant_session"]
@@ -104,9 +132,10 @@ async def run_agent(message):
 
         try:
             status_placeholder.info("응답을 검토 중입니다...")
+            agent_input = build_contextual_user_message(message, restaurant_ctx)
             stream = Runner.run_streamed(
                 st.session_state["restaurant_agent"],
-                message,
+                agent_input,
                 session=session,
                 context=restaurant_ctx,
             )
