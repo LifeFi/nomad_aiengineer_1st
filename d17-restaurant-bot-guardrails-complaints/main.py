@@ -104,19 +104,6 @@ restaurant_ctx = RestaurantContext(
 )
 
 
-def build_contextual_user_message(message: str, context: RestaurantContext) -> str:
-    restrictions = context.dietary_restrictions or "없음"
-    return f"""
-[고객 프로필]
-- 이름: {context.customer_name}
-- 인원수: {context.party_size}명
-- 식이 제한: {restrictions}
-
-[사용자 메시지]
-{message}
-""".strip()
-
-
 # 세션 초기화
 if "restaurant_session" not in st.session_state:
     st.session_state["restaurant_session"] = SQLiteSession(
@@ -160,10 +147,9 @@ async def run_agent(message):
 
         try:
             status_placeholder.info("응답을 검토 중입니다...")
-            agent_input = build_contextual_user_message(message, restaurant_ctx)
             stream = Runner.run_streamed(
                 st.session_state["restaurant_agent"],
-                agent_input,
+                message,
                 session=session,
                 context=restaurant_ctx,
             )

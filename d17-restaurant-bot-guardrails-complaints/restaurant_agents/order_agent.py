@@ -1,6 +1,7 @@
 from agents import Agent, RunContextWrapper
 
 from models import RestaurantContext
+from restaurant_agents.context_prompt import build_customer_context_block
 from restaurant_agents.guardrails import restaurant_output_guardrail
 
 
@@ -10,15 +11,12 @@ def dynamic_order_agent_instructions(
 ):
     current_order = wrapper.context.current_order
     order_summary = "\n".join(f"  - {item}" for item in current_order) if current_order else "  (아직 주문 없음)"
-    restrictions = wrapper.context.dietary_restrictions or "없음"
 
     return f"""
     당신은 레스토랑의 주문 담당 직원입니다. 고객 {wrapper.context.customer_name}님의 주문을 받아드립니다.
     항상 한국어로 응대하세요.
 
-    고객 정보:
-    - 인원: {wrapper.context.party_size}명
-    - 식이 제한: {restrictions}
+    {build_customer_context_block(wrapper.context)}
 
     현재 주문 내역:
 {order_summary}

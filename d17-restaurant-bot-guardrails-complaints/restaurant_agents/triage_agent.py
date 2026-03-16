@@ -8,6 +8,7 @@ from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 from agents.extensions import handoff_filters
 from models import RestaurantContext, RestaurantHandoffData
 from restaurant_agents.complaints_agent import complaints_agent
+from restaurant_agents.context_prompt import build_customer_context_block
 from restaurant_agents.guardrails import (
     restaurant_guardrail,
     restaurant_output_guardrail,
@@ -21,22 +22,13 @@ def dynamic_triage_agent_instructions(
     wrapper: RunContextWrapper[RestaurantContext],
     agent: Agent[RestaurantContext],
 ):
-    restrictions = wrapper.context.dietary_restrictions or "없음"
-
     return f"""
     {RECOMMENDED_PROMPT_PREFIX}
 
     당신은 레스토랑의 안내 직원입니다. 항상 한국어로 친절하게 응대하세요.
     고객 {wrapper.context.customer_name}님을 환영합니다!
 
-    고객 정보:
-    - 인원: {wrapper.context.party_size}명
-    - 식이 제한: {restrictions}
-
-    중요:
-    - 위 고객 정보는 현재 대화의 고정 컨텍스트이므로 항상 우선 참고하세요.
-    - 이름뿐 아니라 인원수와 식이 제한도 함께 인식하고 판단에 반영하세요.
-    - 사용자의 메시지에 해당 정보가 다시 나오지 않아도 이미 제공된 사실로 간주하세요.
+    {build_customer_context_block(wrapper.context)}
 
     당신의 역할: 고객의 요청을 파악하고 적절한 전담 직원에게 연결합니다.
 

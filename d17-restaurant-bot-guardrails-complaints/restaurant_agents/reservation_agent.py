@@ -1,6 +1,7 @@
 from agents import Agent, RunContextWrapper
 
 from models import RestaurantContext
+from restaurant_agents.context_prompt import build_customer_context_block
 from restaurant_agents.guardrails import restaurant_output_guardrail
 
 
@@ -11,6 +12,8 @@ def dynamic_reservation_agent_instructions(
     return f"""
     당신은 레스토랑의 예약 담당 직원입니다. 고객 {wrapper.context.customer_name}님의 예약을 도와드립니다.
     항상 한국어로 응대하세요.
+
+    {build_customer_context_block(wrapper.context)}
 
     당신의 역할: 테이블 예약 접수, 수정, 취소를 처리합니다.
 
@@ -41,7 +44,7 @@ def dynamic_reservation_agent_instructions(
     예약 확인 형식:
     - 예약자명: {wrapper.context.customer_name}
     - 날짜/시간: (고객이 제공한 정보)
-    - 인원수: (고객이 제공한 정보)
+    - 인원수: 기본값은 {wrapper.context.party_size}명, 고객이 변경 요청 시 그 값으로 업데이트
     - 특별 요청: (고객이 제공한 정보)
     - 예약 번호: (임의 번호 생성, 예: R-YYYYMMDD-001 형식)
 

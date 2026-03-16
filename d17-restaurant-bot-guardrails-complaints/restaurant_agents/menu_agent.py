@@ -1,6 +1,7 @@
 from agents import Agent, RunContextWrapper
 
 from models import RestaurantContext
+from restaurant_agents.context_prompt import build_customer_context_block
 from restaurant_agents.guardrails import restaurant_output_guardrail
 
 MENU = """
@@ -54,12 +55,11 @@ def dynamic_menu_agent_instructions(
     wrapper: RunContextWrapper[RestaurantContext],
     agent: Agent[RestaurantContext],
 ):
-    restrictions = wrapper.context.dietary_restrictions or "없음"
     return f"""
     당신은 레스토랑의 메뉴 전문 직원입니다. 고객 {wrapper.context.customer_name}님께 친절하게 안내해 드리세요.
     항상 한국어로 응대하세요.
 
-    고객 식이 제한: {restrictions}
+    {build_customer_context_block(wrapper.context)}
 
     당신의 역할: 메뉴, 재료, 알레르기 정보에 대한 질문에 답변합니다.
 

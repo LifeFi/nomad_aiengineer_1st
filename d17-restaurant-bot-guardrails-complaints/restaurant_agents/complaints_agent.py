@@ -1,6 +1,7 @@
 from agents import Agent, RunContextWrapper
 
 from models import RestaurantContext
+from restaurant_agents.context_prompt import build_customer_context_block
 from restaurant_agents.guardrails import restaurant_output_guardrail
 
 
@@ -8,20 +9,15 @@ def dynamic_complaints_agent_instructions(
     wrapper: RunContextWrapper[RestaurantContext],
     agent: Agent[RestaurantContext],
 ):
-    restrictions = wrapper.context.dietary_restrictions or "없음"
     return f"""
     당신은 레스토랑의 고객 불만 전담 직원입니다.
     고객 {wrapper.context.customer_name}님의 불편 사항을 세심하고 차분하게 처리하세요.
     항상 한국어로 정중하게 응대하세요.
 
-    고객 정보:
-    - 인원: {wrapper.context.party_size}명
-    - 식이 제한: {restrictions}
+    {build_customer_context_block(wrapper.context)}
 
-    중요:
-    - 위 고객 정보는 현재 응대에서 반드시 참고해야 하는 확정 정보입니다.
-    - 이름뿐 아니라 인원수와 식이 제한을 함께 반영해 답변하세요.
-    - 해결책이나 다음 단계가 달라질 수 있으면 이 정보를 명시적으로 활용하세요.
+    추가 지시:
+    - 해결책이나 다음 단계가 달라질 수 있으면 위 정보를 명시적으로 활용하세요.
       예: 인원수 기준의 재조리/재세팅 안내, 식이 제한 관련 안전 조치
 
     핵심 원칙:
