@@ -163,6 +163,7 @@ class CommitQuizApp(App):
         self.has_more_commits = has_more_commits(self.commit_list_limit)
         self.total_commit_count = count_total_commits()
         self.selected_commit_indices: set[int] = set()
+        self.unseen_auto_refresh_commit_shas: set[str] = set()
         self.commit_detail_cache: dict[str, str] = {}
         self.last_quit_attempt_at = 0.0
         self._previous_sigint_handler = None
@@ -273,7 +274,8 @@ class CommitQuizApp(App):
             prefix = Text("  ✓  ", style="bold green")
         line = Text()
         line.append_text(prefix)
-        line.append(f"{commit['short_sha']}  {commit['subject']}")
+        style = "bold bright_cyan" if commit["sha"] in self.unseen_auto_refresh_commit_shas else ""
+        line.append(f"{commit['short_sha']}  {commit['subject']}", style=style)
         return line
 
     def _load_more_label_text(self) -> Text:
@@ -399,7 +401,12 @@ class CommitQuizApp(App):
         self._show_commit_summary(restored_index)
         self._update_commit_detail(restored_index)
 
-    def _reload_commit_data(self, announce: str | None = None) -> None:
+    def _reload_commit_data(
+        self,
+        announce: str | None = None,
+        mark_new_commits: bool = False,
+    ) -> None:
+        previous_commit_shas = {commit["sha"] for commit in self.commits}
         previous_selected_shas = {
             self.commits[index]["sha"]
             for index in self.selected_commit_indices
@@ -414,6 +421,11 @@ class CommitQuizApp(App):
         self.total_commit_count = count_total_commits()
         self._last_seen_head_sha = self.commits[0]["sha"] if self.commits else ""
         self._last_seen_total_commit_count = self.total_commit_count
+
+        if mark_new_commits:
+            for commit in self.commits:
+                if commit["sha"] not in previous_commit_shas:
+                    self.unseen_auto_refresh_commit_shas.add(commit["sha"])
 
         self.selected_commit_indices = {
             index
@@ -513,7 +525,10 @@ class CommitQuizApp(App):
             latest_head_sha != self._last_seen_head_sha
             or latest_total != self._last_seen_total_commit_count
         ):
-            self._reload_commit_data("새 커밋을 감지해 목록을 갱신했습니다.")
+            self._reload_commit_data(
+                "새 커밋을 감지해 목록을 갱신했습니다.",
+                mark_new_commits=True,
+            )
 
     def on_key(self, event: Key) -> None:
         if event.key == "tab":
@@ -532,6 +547,10 @@ class CommitQuizApp(App):
         if event.list_view.index >= len(self.commits):
             self._set_status("Space를 눌러 커밋을 더 불러오세요.")
             return
+        highlighted_sha = self.commits[event.list_view.index]["sha"]
+        if highlighted_sha in self.unseen_auto_refresh_commit_shas:
+            self.unseen_auto_refresh_commit_shas.remove(highlighted_sha)
+            self._refresh_commit_list_labels()
         self.selected_commit_index = event.list_view.index
         self._show_commit_summary(self.selected_commit_index)
         self._update_commit_detail(self.selected_commit_index)
