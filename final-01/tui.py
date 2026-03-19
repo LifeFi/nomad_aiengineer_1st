@@ -525,6 +525,9 @@ class CommitQuizApp(App):
             latest_head_sha != self._last_seen_head_sha
             or latest_total != self._last_seen_total_commit_count
         ):
+            new_commit_count = max(0, latest_total - self._last_seen_total_commit_count)
+            if new_commit_count:
+                self.commit_list_limit += new_commit_count
             self._reload_commit_data(
                 "새 커밋을 감지해 목록을 갱신했습니다.",
                 mark_new_commits=True,
