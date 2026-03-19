@@ -268,9 +268,9 @@ class CommitQuizApp(App):
 
     def _commit_label_text(self, index: int) -> Text:
         commit = self.commits[index]
-        prefix = Text("     ")
+        prefix = Text("   ")
         if index in self.selected_commit_indices:
-            prefix = Text("  ✓  ", style="bold green")
+            prefix = Text(" ✓ ", style="bold green")
         line = Text()
         line.append_text(prefix)
         style = (
@@ -282,7 +282,7 @@ class CommitQuizApp(App):
         return line
 
     def _load_more_label_text(self) -> Text:
-        line = Text("  +  ", style="bold cyan")
+        line = Text(" + ", style="bold cyan")
         line.append(f"Load More Commits (+{DEFAULT_COMMIT_LIST_LIMIT})", style="bold")
         return line
 
