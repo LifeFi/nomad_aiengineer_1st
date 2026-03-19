@@ -78,11 +78,11 @@ class CommitQuizApp(App):
     }
 
     #commit-detail-panel {
-        height: 12;
+        height: 11;
     }
 
     #control-panel {
-        height: 19;
+        height: 11;
     }
 
     #result-panel {
@@ -97,7 +97,7 @@ class CommitQuizApp(App):
     .section-title {
         text-style: bold;
         color: $accent;
-        margin: 1 0 0 0;
+        margin: 0 0 0 0;
     }
 
     .help-text {
@@ -120,7 +120,7 @@ class CommitQuizApp(App):
 
     #commit-detail-view {
         height: 1fr;
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
 
     #generate {
@@ -185,10 +185,6 @@ class CommitQuizApp(App):
             with Vertical():
                 with Vertical(id="commit-detail-panel"):
                     yield Label("Commit Detail", classes="section-title")
-                    yield Static(
-                        "커밋 상세 정보",
-                        classes="help-text",
-                    )
                     yield TextArea(
                         "",
                         id="commit-detail-view",
@@ -196,12 +192,15 @@ class CommitQuizApp(App):
                     )
                 with Vertical(id="control-panel"):
                     yield Label("Quiz Options", classes="section-title")
-                    yield Label("Commit Mode", classes="help-text")
-                    with RadioSet(id="commit-mode", classes="mode-group"):
-                        yield RadioButton("Auto Fallback", id="mode-auto", value=True)
-                        yield RadioButton("Latest Only", id="mode-latest")
-                        yield RadioButton("Selected Commit", id="mode-selected")
                     with Horizontal(classes="row"):
+                        with Vertical(classes="option-group"):
+                            yield Label("Commit Mode", classes="help-text")
+                            with RadioSet(id="commit-mode", classes="mode-group"):
+                                yield RadioButton(
+                                    "Auto Fallback", id="mode-auto", value=True
+                                )
+                                yield RadioButton("Latest Only", id="mode-latest")
+                                yield RadioButton("Selected Commit", id="mode-selected")
                         with Vertical(classes="option-group"):
                             yield Label("Difficulty", classes="help-text")
                             with RadioSet(id="difficulty"):
@@ -274,7 +273,11 @@ class CommitQuizApp(App):
             prefix = Text("  ✓  ", style="bold green")
         line = Text()
         line.append_text(prefix)
-        style = "bold bright_cyan" if commit["sha"] in self.unseen_auto_refresh_commit_shas else ""
+        style = (
+            "bold bright_cyan"
+            if commit["sha"] in self.unseen_auto_refresh_commit_shas
+            else ""
+        )
         line.append(f"{commit['short_sha']}  {commit['subject']}", style=style)
         return line
 
