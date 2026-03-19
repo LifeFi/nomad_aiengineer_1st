@@ -35,6 +35,7 @@ from main import (
 
 DEFAULT_REQUEST = "최근 커밋 기반으로 퀴즈 만들어줘"
 QUIT_CONFIRM_SECONDS = 1.5
+AUTO_REFRESH_SECONDS = 3.0
 
 
 class QuizGenerated(Message):
@@ -166,6 +167,8 @@ class CommitQuizApp(App):
         self.last_quit_attempt_at = 0.0
         self._previous_sigint_handler = None
         self._pending_sigint = False
+        self._last_seen_head_sha = self.commits[0]["sha"] if self.commits else ""
+        self._last_seen_total_commit_count = self.total_commit_count
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -234,6 +237,7 @@ class CommitQuizApp(App):
         self._previous_sigint_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self._handle_sigint)
         self.set_interval(0.1, self._poll_sigint)
+        self.set_interval(AUTO_REFRESH_SECONDS, self._poll_commit_updates)
         commit_list = self.query_one("#commit-list", ListView)
         if self.commits:
             commit_list.index = 0
@@ -378,6 +382,62 @@ class CommitQuizApp(App):
             self._commit_panel_help_text()
         )
 
+    def _refresh_commit_list_view(self) -> None:
+        commit_list = self.query_one("#commit-list", ListView)
+        commit_list.clear()
+        for item in self._build_commit_items():
+            commit_list.append(item)
+
+    def _restore_selection_after_refresh(self) -> None:
+        commit_list = self.query_one("#commit-list", ListView)
+        if not self.commits:
+            return
+
+        restored_index = min(self.selected_commit_index, len(self.commits) - 1)
+        commit_list.index = restored_index
+        self.selected_commit_index = restored_index
+        self._show_commit_summary(restored_index)
+        self._update_commit_detail(restored_index)
+
+    def _reload_commit_data(self, announce: str | None = None) -> None:
+        previous_selected_shas = {
+            self.commits[index]["sha"]
+            for index in self.selected_commit_indices
+            if index < len(self.commits)
+        }
+        previously_highlighted_sha = None
+        if self.commits and self.selected_commit_index < len(self.commits):
+            previously_highlighted_sha = self.commits[self.selected_commit_index]["sha"]
+
+        self.commits = list_recent_commits(limit=self.commit_list_limit)
+        self.has_more_commits = has_more_commits(self.commit_list_limit)
+        self.total_commit_count = count_total_commits()
+        self._last_seen_head_sha = self.commits[0]["sha"] if self.commits else ""
+        self._last_seen_total_commit_count = self.total_commit_count
+
+        self.selected_commit_indices = {
+            index
+            for index, commit in enumerate(self.commits)
+            if commit["sha"] in previous_selected_shas
+        }
+
+        if previously_highlighted_sha:
+            for index, commit in enumerate(self.commits):
+                if commit["sha"] == previously_highlighted_sha:
+                    self.selected_commit_index = index
+                    break
+            else:
+                self.selected_commit_index = 0
+        else:
+            self.selected_commit_index = 0
+
+        self._refresh_commit_list_view()
+        self._update_commit_panel_help()
+        self._restore_selection_after_refresh()
+
+        if announce:
+            self._set_status(announce)
+
     def _focus_chain(self) -> list[Widget]:
         return [
             self.query_one("#commit-list", ListView),
@@ -421,7 +481,9 @@ class CommitQuizApp(App):
             return
 
         self.last_quit_attempt_at = now
-        message = f"종료하려면 {QUIT_CONFIRM_SECONDS:.1f}초 안에 Ctrl+C를 한 번 더 누르세요."
+        message = (
+            f"종료하려면 {QUIT_CONFIRM_SECONDS:.1f}초 안에 Ctrl+C를 한 번 더 누르세요."
+        )
         self._set_status(message)
         self.notify(
             message,
@@ -442,6 +504,17 @@ class CommitQuizApp(App):
         self._pending_sigint = False
         self.action_confirm_quit()
 
+    def _poll_commit_updates(self) -> None:
+        latest = list_recent_commits(limit=1)
+        latest_head_sha = latest[0]["sha"] if latest else ""
+        latest_total = count_total_commits()
+
+        if (
+            latest_head_sha != self._last_seen_head_sha
+            or latest_total != self._last_seen_total_commit_count
+        ):
+            self._reload_commit_data("새 커밋을 감지해 목록을 갱신했습니다.")
+
     def on_key(self, event: Key) -> None:
         if event.key == "tab":
             event.stop()
@@ -451,7 +524,6 @@ class CommitQuizApp(App):
             event.stop()
             self.action_focus_previous_section()
             return
-
 
     @on(ListView.Highlighted, "#commit-list")
     def handle_commit_highlight(self, event: ListView.Highlighted) -> None:
@@ -485,42 +557,16 @@ class CommitQuizApp(App):
         self._show_commit_summary(index)
 
     def action_reload_commits(self) -> None:
-        self.commits = list_recent_commits(limit=self.commit_list_limit)
-        self.has_more_commits = has_more_commits(self.commit_list_limit)
-        self.total_commit_count = count_total_commits()
         self.selected_commit_indices.clear()
         self.commit_detail_cache.clear()
-        commit_list = self.query_one("#commit-list", ListView)
-        commit_list.clear()
-        for item in self._build_commit_items():
-            commit_list.append(item)
-        self._update_commit_panel_help()
-        if self.commits:
-            self.selected_commit_index = 0
-            commit_list.index = 0
-            self._show_commit_summary(0)
-            self._update_commit_detail(0)
+        self.selected_commit_index = 0
+        self._reload_commit_data("커밋 목록을 새로고침했습니다.")
         self._set_result("커밋 목록을 새로고침했습니다.")
 
     def action_load_more_commits(self) -> None:
         previous_count = len(self.commits)
         self.commit_list_limit += DEFAULT_COMMIT_LIST_LIMIT
-        self.commits = list_recent_commits(limit=self.commit_list_limit)
-        self.has_more_commits = has_more_commits(self.commit_list_limit)
-        self.total_commit_count = count_total_commits()
-
-        commit_list = self.query_one("#commit-list", ListView)
-        commit_list.clear()
-        for item in self._build_commit_items():
-            commit_list.append(item)
-        self._update_commit_panel_help()
-
-        if self.commits:
-            restored_index = min(self.selected_commit_index, len(self.commits) - 1)
-            self.selected_commit_index = restored_index
-            commit_list.index = restored_index
-            self._show_commit_summary(restored_index)
-            self._update_commit_detail(restored_index)
+        self._reload_commit_data()
 
         loaded_count = len(self.commits)
         if loaded_count == previous_count:
