@@ -1,7 +1,7 @@
 {
-  "dependencies": ["langchain_openai", "./main.py"],
+  "dependencies": ["langchain_openai", "./src/git_study/main.py"],
   "env": "./.env",
   "graphs": {
-    "commit_diff_quiz": "./main.py:graph"
+    "commit_diff_quiz": "./src/git_study/main.py:graph"
   }
 }

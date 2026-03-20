@@ -1,7 +1,7 @@
 [project]
-name = "final-01"
+name = "git-study"
 version = "0.1.0"
-description = "Add your description here"
+description = "Study code and commits through Git history"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -17,7 +17,20 @@ dependencies = [
 ]
 
 [project.scripts]
-commit-quiz-tui = "tui:run"
+git-study = "git_study.tui:run"
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [dependency-groups]
 dev = [

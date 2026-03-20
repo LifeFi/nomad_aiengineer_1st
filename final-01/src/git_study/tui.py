@@ -28,7 +28,7 @@ from textual.widgets import (
 )
 from textual.widgets._markdown import MarkdownFence, MarkdownTableOfContents
 
-from main import (
+from .main import (
     DEFAULT_COMMIT_LIST_LIMIT,
     build_commit_context,
     get_commit_list_snapshot,
@@ -544,7 +544,9 @@ class CommitQuizApp(App):
                     placeholder="https://github.com/nomadcoders/ai-agents-masterclass",
                     id="repo-location",
                 )
-                yield Button("Open", id="repo-open", classes="result-tool result-action")
+                yield Button(
+                    "Open", id="repo-open", classes="result-tool result-action"
+                )
         with Horizontal(id="body"):
             with Vertical(id="commit-panel"):
                 yield Label("Recent Commits", classes="section-title")

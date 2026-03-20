@@ -1,6 +1,6 @@
-# Commit Diff Quiz Graph
+# git-study
 
-최근 Git 커밋의 변경 내용을 읽고, 그 맥락을 바탕으로 학습용 퀴즈를 만드는 `LangGraph` + `Textual` 프로젝트입니다.
+최근 Git 커밋의 변경 내용을 읽고, 그 맥락을 바탕으로 학습용 퀴즈와 학습 흐름을 만드는 `LangGraph` + `Textual` 프로젝트입니다.
 
 ## What It Does
 
@@ -25,13 +25,13 @@ UV_CACHE_DIR=/tmp/uv-cache uv run langgraph dev
 Textual TUI:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run commit-quiz-tui
+UV_CACHE_DIR=/tmp/uv-cache uv run git-study
 ```
 
 또는
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run python tui.py
+UV_CACHE_DIR=/tmp/uv-cache uv run python -m git_study.tui
 ```
 
 ## TUI Overview
@@ -101,6 +101,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python tui.py
 
 ## Notes
 
+- 패키지 이름은 `git-study`, 파이썬 패키지 경로는 `src/git_study` 입니다.
 - 실제 퀴즈 생성에는 `OPENAI_API_KEY`가 필요합니다.
 - `.env` 파일이 있으면 `load_dotenv()`로 자동 로드합니다.
 - `commit_mode`는 `auto`, `latest`, `selected`를 지원합니다.
