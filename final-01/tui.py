@@ -1,5 +1,6 @@
 import time
 import signal
+from pathlib import Path
 
 from rich.text import Text
 from textual import on, work
@@ -8,6 +9,7 @@ from textual.containers import Horizontal, Vertical
 from textual.events import Key
 from textual.message import Message
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import (
     Button,
@@ -16,11 +18,14 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    Markdown,
+    MarkdownViewer,
     RadioButton,
     RadioSet,
     Static,
     TextArea,
 )
+from textual.widgets._markdown import MarkdownFence, MarkdownTableOfContents
 
 from main import (
     DEFAULT_COMMIT_LIST_LIMIT,
@@ -36,6 +41,7 @@ from main import (
 DEFAULT_REQUEST = "최근 커밋 기반으로 퀴즈 만들어줘"
 QUIT_CONFIRM_SECONDS = 1.5
 AUTO_REFRESH_SECONDS = 3.0
+STATUS_ANIMATION_SECONDS = 0.35
 
 
 class QuizGenerated(Message):
@@ -48,6 +54,145 @@ class QuizFailed(Message):
     def __init__(self, error_message: str) -> None:
         self.error_message = error_message
         super().__init__()
+
+
+class LabeledMarkdownFence(MarkdownFence):
+    DEFAULT_CSS = """
+    LabeledMarkdownFence {
+        padding: 0;
+        margin: 1 0;
+        overflow: scroll hidden;
+        scrollbar-size-horizontal: 0;
+        scrollbar-size-vertical: 0;
+        width: 1fr;
+        height: auto;
+        color: rgb(210,210,210);
+        background: black 10%;
+        &:light {
+            background: white 30%;
+        }
+    }
+
+    LabeledMarkdownFence > #code-language {
+        height: auto;
+        padding: 0 1;
+        color: $text-muted;
+        background: $panel-darken-1;
+        text-style: bold;
+    }
+
+    LabeledMarkdownFence > #code-content {
+        padding: 1 2;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Label(self.lexer or "text", id="code-language")
+        yield Label(self._highlighted_code, id="code-content")
+
+    async def _update_from_block(self, block):
+        await super()._update_from_block(block)
+        self.query_one("#code-language", Label).update(self.lexer or "text")
+
+
+class LabeledMarkdown(Markdown):
+    BLOCKS = {
+        **Markdown.BLOCKS,
+        "fence": LabeledMarkdownFence,
+        "code_block": LabeledMarkdownFence,
+    }
+
+
+class LabeledMarkdownViewer(MarkdownViewer):
+    def compose(self) -> ComposeResult:
+        markdown = LabeledMarkdown(
+            parser_factory=self._parser_factory,
+            open_links=self._open_links,
+        )
+        markdown.can_focus = True
+        yield markdown
+        yield MarkdownTableOfContents(markdown)
+
+
+class ResultLoadScreen(ModalScreen[Path | None]):
+    CSS = """
+    #load-dialog {
+        width: 72;
+        max-width: 90%;
+        height: 22;
+        max-height: 80%;
+        padding: 1 2;
+        border: round $accent;
+        background: $surface;
+        margin: 4 0;
+    }
+
+    #load-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+
+    #load-help {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #load-file-list {
+        height: 1fr;
+    }
+    """
+
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, files: list[Path]) -> None:
+        super().__init__()
+        self.files = files
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="load-dialog"):
+            yield Label("Load Quiz File", id="load-title")
+            yield Static("Enter 또는 Space로 선택, Esc로 닫기", id="load-help")
+            yield ListView(
+                *[
+                    ListItem(
+                        Label(
+                            f"{path.name}  ({time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(path.stat().st_mtime))})"
+                        )
+                    )
+                    for path in self.files
+                ],
+                id="load-file-list",
+            )
+
+    def on_mount(self) -> None:
+        file_list = self.query_one("#load-file-list", ListView)
+        if self.files:
+            file_list.index = 0
+        file_list.focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _selected_file(self) -> Path | None:
+        file_list = self.query_one("#load-file-list", ListView)
+        index = file_list.index
+        if index is None or not (0 <= index < len(self.files)):
+            return None
+        return self.files[index]
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "space" and self.focused is self.query_one(
+            "#load-file-list", ListView
+        ):
+            event.stop()
+            self.dismiss(self._selected_file())
+
+    @on(ListView.Selected, "#load-file-list")
+    def handle_file_selected(self) -> None:
+        self.dismiss(self._selected_file())
 
 
 class CommitQuizApp(App):
@@ -133,9 +278,95 @@ class CommitQuizApp(App):
         color: $text-muted;
     }
 
-    #result-view {
+    #result-markdown,
+    #result-plain {
         height: 1fr;
-        padding-bottom: 1;
+        margin: 0;
+        padding: 0;
+    }
+
+    #result-markdown {
+        background: $surface;
+    }
+
+    #result-markdown MarkdownH2 {
+        text-style: bold;
+    }
+
+    #result-plain {
+        background: $surface;
+        border: none;
+    }
+
+    #result-toolbar {
+        height: auto;
+        width: auto;
+    }
+
+    #result-actions {
+        width: auto;
+        height: auto;
+        align: right middle;
+    }
+
+    #result-header-spacer {
+        width: 1fr;
+    }
+
+    #result-mode-group {
+        width: auto;
+        height: auto;
+        margin-right: 1;
+        padding: 0;
+    }
+
+    .result-separator {
+        width: auto;
+        min-width: 1;
+        margin: 0;
+        padding: 0;
+        color: $text-muted;
+    }
+
+    .result-tool {
+        width: auto;
+        min-width: 4;
+        height: 1;
+        min-height: 1;
+        padding: 0;
+        background: transparent;
+        border: none;
+        color: $text-muted;
+    }
+
+    .result-tool:hover,
+    .result-tool:focus {
+        background: transparent;
+        color: $text;
+        text-style: bold underline;
+    }
+
+    Button.result-toggle.-active {
+        color: $success;
+        text-style: bold;
+    }
+
+    Button.result-toggle.-active:focus,
+    Button.result-toggle.-active:hover {
+        color: $success;
+        text-style: bold underline;
+    }
+
+    .result-action {
+        color: cyan;
+        text-style: bold;
+    }
+
+    #result-header {
+        height: auto;
+        width: 100%;
+        align: left middle;
+        margin-bottom: 0;
     }
 
     #commit-panel:focus-within,
@@ -170,6 +401,19 @@ class CommitQuizApp(App):
         self._pending_sigint = False
         self._last_seen_head_sha = self.commits[0]["sha"] if self.commits else ""
         self._last_seen_total_commit_count = self.total_commit_count
+        self.result_content = (
+            "왼쪽에서 커밋을 선택하고 Generate Quiz를 누르면 결과가 여기에 표시됩니다."
+        )
+        self.result_view_mode = "markdown"
+        self._status_animation_enabled = False
+        self._status_animation_frame = 0
+        self._status_animation_messages = [
+            "LangGraph 호출중",
+            "변경 내용을 분석중",
+            "퀴즈를 구성중",
+            "응답을 정리중",
+        ]
+        self._result_animation_enabled = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -225,10 +469,24 @@ class CommitQuizApp(App):
                     yield Button("Generate Quiz", id="generate", variant="primary")
                     yield Static("준비됨", id="status")
                 with Vertical(id="result-panel"):
-                    yield Label("Quiz Output", classes="section-title")
+                    with Horizontal(id="result-header"):
+                        yield Label("Quiz Output", classes="section-title")
+                        yield Static("", id="result-header-spacer")
+                        with Horizontal(id="result-actions"):
+                            with Horizontal(id="result-mode-group"):
+                                yield Button("md", id="result-mode-markdown", classes="result-tool result-toggle")
+                                yield Static("|", classes="result-separator")
+                                yield Button("plain", id="result-mode-plain", classes="result-tool result-toggle")
+                            yield Button("Load", id="result-load", classes="result-tool result-action")
+                            yield Button("Save", id="result-download", classes="result-tool result-action")
+                    yield LabeledMarkdownViewer(
+                        self.result_content,
+                        id="result-markdown",
+                        show_table_of_contents=False,
+                    )
                     yield TextArea(
-                        "왼쪽에서 커밋을 선택하고 Generate Quiz를 누르면 결과가 여기에 표시됩니다.",
-                        id="result-view",
+                        self.result_content,
+                        id="result-plain",
                         read_only=True,
                     )
         yield Footer()
@@ -238,12 +496,14 @@ class CommitQuizApp(App):
         signal.signal(signal.SIGINT, self._handle_sigint)
         self.set_interval(0.1, self._poll_sigint)
         self.set_interval(AUTO_REFRESH_SECONDS, self._poll_commit_updates)
+        self.set_interval(STATUS_ANIMATION_SECONDS, self._animate_status)
         commit_list = self.query_one("#commit-list", ListView)
         if self.commits:
             commit_list.index = 0
             self._show_commit_summary(0)
             self._update_commit_detail(0)
             commit_list.focus()
+        self._set_result_view_mode(self.result_view_mode)
 
     def on_unmount(self) -> None:
         if self._previous_sigint_handler is not None:
@@ -375,12 +635,113 @@ class CommitQuizApp(App):
         ]
 
     def _set_result(self, content: str) -> None:
-        result_view = self.query_one("#result-view", TextArea)
-        result_view.text = content
-        result_view.scroll_home(animate=False)
+        self.result_content = content
+        markdown_view = self.query_one("#result-markdown", LabeledMarkdownViewer)
+        markdown_view.document.update(content)
+        markdown_view.scroll_home(animate=False)
+        plain_view = self.query_one("#result-plain", TextArea)
+        plain_view.text = content
+        plain_view.scroll_home(animate=False)
+
+    def _set_result_view_mode(self, mode: str) -> None:
+        self.result_view_mode = mode
+        markdown_view = self.query_one("#result-markdown", LabeledMarkdownViewer)
+        plain_view = self.query_one("#result-plain", TextArea)
+        markdown_button = self.query_one("#result-mode-markdown", Button)
+        plain_button = self.query_one("#result-mode-plain", Button)
+
+        is_markdown = mode == "markdown"
+        markdown_view.display = is_markdown
+        plain_view.display = not is_markdown
+        markdown_button.set_class(is_markdown, "-active")
+        plain_button.set_class(not is_markdown, "-active")
+
+    def _download_result(self) -> None:
+        extension = "md" if self.result_view_mode == "markdown" else "txt"
+        filename = Path.cwd() / f"quiz-output-{time.strftime('%Y%m%d-%H%M%S')}.{extension}"
+        filename.write_text(self.result_content, encoding="utf-8")
+        self._set_status(f"결과를 저장했습니다: {filename.name}")
+        self.notify(
+            f"{filename.name} 파일로 저장했습니다.",
+            title="Download Complete",
+            timeout=2.0,
+        )
+
+    def _saved_result_files(self) -> list[Path]:
+        return sorted(
+            Path.cwd().glob("quiz-output-*.*"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+
+    def _load_result_from_file(self, filename: Path) -> None:
+        content = filename.read_text(encoding="utf-8")
+        self._set_result(content)
+        self._set_result_view_mode(
+            "markdown" if filename.suffix.lower() == ".md" else "plain"
+        )
+        self._set_status(f"결과를 불러왔습니다: {filename.name}")
+        self.notify(
+            f"{filename.name} 파일을 불러왔습니다.",
+            title="Load Complete",
+            timeout=2.0,
+        )
+
+    def _load_result(self) -> None:
+        candidates = self._saved_result_files()
+        if not candidates:
+            self._set_status("불러올 저장 파일이 없습니다.")
+            self.notify(
+                "현재 폴더에 quiz-output-* 파일이 없습니다.",
+                title="Load Failed",
+                severity="warning",
+                timeout=2.0,
+            )
+            return
+
+        self.push_screen(ResultLoadScreen(candidates), self._handle_loaded_result)
+
+    def _handle_loaded_result(self, selected_file: Path | None) -> None:
+        if selected_file is None:
+            self._set_status("불러오기를 취소했습니다.")
+            return
+        self._load_result_from_file(selected_file)
 
     def _set_status(self, content: str) -> None:
         self.query_one("#status", Static).update(content)
+
+    def _start_status_animation(self) -> None:
+        self._status_animation_enabled = True
+        self._result_animation_enabled = True
+        self._status_animation_frame = 0
+        self._animate_status()
+
+    def _stop_status_animation(self) -> None:
+        self._status_animation_enabled = False
+        self._result_animation_enabled = False
+
+    def _animate_status(self) -> None:
+        if not self._status_animation_enabled and not self._result_animation_enabled:
+            return
+        base = self._status_animation_messages[
+            self._status_animation_frame % len(self._status_animation_messages)
+        ]
+        dots = "." * ((self._status_animation_frame % 3) + 1)
+        animated_text = f"{base}{dots}"
+        if self._status_animation_enabled:
+            self._set_status(animated_text)
+        if self._result_animation_enabled:
+            self._set_result(
+                "\n".join(
+                    [
+                        f"## {animated_text}",
+                        "",
+                        "잠시만 기다려 주세요.",
+                        "최근 커밋과 변경 파일을 읽고 퀴즈를 만들고 있습니다.",
+                    ]
+                )
+            )
+        self._status_animation_frame += 1
 
     def _update_commit_panel_help(self) -> None:
         self.query_one("#commit-panel-help", Static).update(
@@ -460,7 +821,13 @@ class CommitQuizApp(App):
             self.query_one("#commit-mode", RadioSet),
             self.query_one("#difficulty", RadioSet),
             self.query_one("#quiz-style", RadioSet),
-            self.query_one("#result-view", TextArea),
+            self.query_one("#result-mode-markdown", Button),
+            self.query_one("#result-mode-plain", Button),
+            self.query_one("#result-load", Button),
+            self.query_one("#result-download", Button),
+            self.query_one("#result-markdown", LabeledMarkdownViewer)
+            if self.result_view_mode == "markdown"
+            else self.query_one("#result-plain", TextArea),
         ]
 
     def _focus_index_for_widget(self, widget: Widget | None) -> int:
@@ -471,9 +838,9 @@ class CommitQuizApp(App):
         for index, target in enumerate(chain):
             if widget is target:
                 return index
-            if target in list(widget.ancestors):
+            if target in widget.ancestors:
                 return index
-            if widget in list(target.ancestors):
+            if widget in target.ancestors:
                 return index
         return 0
 
@@ -545,6 +912,24 @@ class CommitQuizApp(App):
             event.stop()
             self.action_focus_previous_section()
             return
+        if event.key == "space":
+            focused = self.focused
+            if focused is self.query_one("#result-mode-markdown", Button):
+                event.stop()
+                self._set_result_view_mode("markdown")
+                return
+            if focused is self.query_one("#result-mode-plain", Button):
+                event.stop()
+                self._set_result_view_mode("plain")
+                return
+            if focused is self.query_one("#result-load", Button):
+                event.stop()
+                self._load_result()
+                return
+            if focused is self.query_one("#result-download", Button):
+                event.stop()
+                self._download_result()
+                return
 
     @on(ListView.Highlighted, "#commit-list")
     def handle_commit_highlight(self, event: ListView.Highlighted) -> None:
@@ -564,6 +949,22 @@ class CommitQuizApp(App):
     @on(Button.Pressed, "#generate")
     def handle_generate(self) -> None:
         self.action_generate_quiz()
+
+    @on(Button.Pressed, "#result-mode-markdown")
+    def handle_result_mode_markdown(self) -> None:
+        self._set_result_view_mode("markdown")
+
+    @on(Button.Pressed, "#result-mode-plain")
+    def handle_result_mode_plain(self) -> None:
+        self._set_result_view_mode("plain")
+
+    @on(Button.Pressed, "#result-download")
+    def handle_result_download(self) -> None:
+        self._download_result()
+
+    @on(Button.Pressed, "#result-load")
+    def handle_result_load(self) -> None:
+        self._load_result()
 
     def action_toggle_commit_selection(self) -> None:
         if not self.commits:
@@ -620,8 +1021,7 @@ class CommitQuizApp(App):
                 payload["requested_commit_sha"] = selected_sha
 
         self.query_one("#generate", Button).disabled = True
-        self._set_status("퀴즈 생성 중...")
-        self._set_result("LangGraph를 호출하고 있습니다. 잠시만 기다려 주세요.")
+        self._start_status_animation()
         self.generate_quiz(payload)
 
     @work(thread=True)
@@ -646,12 +1046,14 @@ class CommitQuizApp(App):
     @on(QuizGenerated)
     def handle_quiz_generated(self, message: QuizGenerated) -> None:
         self.query_one("#generate", Button).disabled = False
+        self._stop_status_animation()
         self._set_status("완료")
         self._set_result(message.content)
 
     @on(QuizFailed)
     def handle_quiz_failed(self, message: QuizFailed) -> None:
         self.query_one("#generate", Button).disabled = False
+        self._stop_status_animation()
         self._set_status("오류")
         self._set_result(message.error_message)
 

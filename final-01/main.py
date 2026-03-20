@@ -1,3 +1,4 @@
+from pathlib import PurePath
 from typing import Annotated, Literal, NotRequired, TypedDict
 
 from dotenv import load_dotenv
@@ -12,6 +13,9 @@ load_dotenv()
 MAX_DIFF_CHARS = 12_000
 MAX_COMMITS_TO_SCAN = 8
 DEFAULT_COMMIT_LIST_LIMIT = 10
+MAX_FILE_CONTEXT_CHARS = 12_000
+MAX_FILE_CONTEXT_FILES = 5
+MAX_FILE_SNIPPET_CHARS = 3_000
 
 
 class State(TypedDict):
@@ -27,6 +31,7 @@ class State(TypedDict):
     commit_date: str
     changed_files_summary: str
     diff_text: str
+    file_context_text: str
     selected_reason: str
 
 
@@ -99,6 +104,62 @@ def build_changed_files_summary(commit) -> str:
     return "\n".join(lines)
 
 
+def get_file_content_at_commit(commit_sha: str, path: str) -> str:
+    repo = get_repo()
+    commit = repo.commit(commit_sha)
+    blob = commit.tree / path
+    return blob.data_stream.read().decode("utf-8", errors="replace")
+
+
+def detect_code_language(path: str) -> str:
+    suffix = PurePath(path).suffix.lower()
+    return {
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".tsx": "tsx",
+        ".jsx": "jsx",
+        ".java": "java",
+        ".kt": "kotlin",
+        ".go": "go",
+        ".rs": "rust",
+        ".rb": "ruby",
+        ".php": "php",
+        ".swift": "swift",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".cc": "cpp",
+        ".h": "c",
+        ".hpp": "cpp",
+        ".cs": "csharp",
+        ".scala": "scala",
+        ".sql": "sql",
+        ".sh": "bash",
+        ".zsh": "bash",
+        ".md": "markdown",
+        ".json": "json",
+        ".yml": "yaml",
+        ".yaml": "yaml",
+        ".toml": "toml",
+        ".html": "html",
+        ".css": "css",
+        ".xml": "xml",
+    }.get(suffix, "")
+
+
+def format_file_context_block(path: str, content: str) -> str:
+    language = detect_code_language(path)
+    snippet = content[:MAX_FILE_SNIPPET_CHARS].rstrip()
+    return "\n".join(
+        [
+            f"FILE: {path}",
+            f"```{language}",
+            snippet,
+            "```",
+        ]
+    )
+
+
 def extract_patch_text(commit) -> str:
     if commit.parents:
         diff_index = commit.parents[0].diff(commit, create_patch=True)
@@ -129,6 +190,37 @@ def extract_patch_text(commit) -> str:
     return "\n\n".join(patches)
 
 
+def get_changed_file_paths(commit) -> list[str]:
+    if commit.parents:
+        diff_index = commit.parents[0].diff(commit, create_patch=False)
+    else:
+        diff_index = commit.diff(NULL_TREE, create_patch=False)
+
+    paths: list[str] = []
+    for diff in diff_index:
+        path = diff.b_path or diff.a_path
+        if not path:
+            continue
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def build_file_context_text(commit) -> str:
+    file_contexts: list[str] = []
+
+    for path in get_changed_file_paths(commit)[:MAX_FILE_CONTEXT_FILES]:
+        try:
+            content = get_file_content_at_commit(commit.hexsha, path)
+        except Exception:
+            continue
+
+        file_contexts.append(format_file_context_block(path, content))
+
+    combined = "\n\n".join(file_contexts)
+    return combined[:MAX_FILE_CONTEXT_CHARS].strip()
+
+
 def build_commit_context(commit, selected_reason: str) -> dict[str, str]:
     return {
         "commit_sha": commit.hexsha,
@@ -137,6 +229,7 @@ def build_commit_context(commit, selected_reason: str) -> dict[str, str]:
         "commit_date": commit.committed_datetime.isoformat(),
         "changed_files_summary": build_changed_files_summary(commit),
         "diff_text": sanitize_diff(extract_patch_text(commit)),
+        "file_context_text": build_file_context_text(commit),
         "selected_reason": selected_reason,
     }
 
@@ -165,6 +258,13 @@ def build_multi_commit_context(commits, selected_reason: str) -> dict[str, str]:
                 ]
             )
         ),
+        "file_context_text": "\n\n".join(
+            [
+                f"# Commit {part['commit_sha'][:7]} - {part['commit_subject']}\n{part['file_context_text']}"
+                for part in parts
+                if part["file_context_text"]
+            ]
+        )[:MAX_FILE_CONTEXT_CHARS].strip(),
         "selected_reason": selected_reason,
     }
 
@@ -273,18 +373,23 @@ Changed files summary:
 Sanitized textual diff:
 {state["diff_text"]}
 
+Changed file full content context:
+{state["file_context_text"] or "No readable changed file content was extracted."}
+
 Instructions:
 1. Respond in Korean unless the user explicitly requested another language.
-2. Create 4 quiz questions based only on the commit metadata and diff above.
+2. Create 4 quiz questions based only on the commit metadata, diff, and changed-file full content context above.
 3. Difficulty should be: {difficulty}
 4. Quiz style preference should be: {quiz_style}
 5. Mix question styles: at least one conceptual question, one code-reading question, one intent/purpose question, and one risk/regression question.
 6. For each question, include:
+   - source_code: include a relevant source snippet in a fenced markdown code block using ``` ```
    - question
    - answer
    - short explanation
-7. If the diff does not contain enough context for one question, say that clearly instead of inventing details.
-8. End with a short "이 커밋에서 배울 포인트" section with 3 concise bullets.
+7. Use markdown headings and fenced code blocks so the result renders cleanly in a markdown viewer.
+8. If the diff does not contain enough context for one question, say that clearly instead of inventing details.
+9. End with a short "이 커밋에서 배울 포인트" section with 3 concise bullets.
 """
 
     response = get_llm().invoke(prompt)
