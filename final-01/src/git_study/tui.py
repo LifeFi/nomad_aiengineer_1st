@@ -32,6 +32,7 @@ from .main import (
     DEFAULT_COMMIT_LIST_LIMIT,
     build_commit_context,
     get_commit_list_snapshot,
+    get_latest_commit_head,
     get_repo,
     graph,
 )
@@ -39,7 +40,8 @@ from .main import (
 
 DEFAULT_REQUEST = "최근 커밋 기반으로 퀴즈 만들어줘"
 QUIT_CONFIRM_SECONDS = 1.5
-AUTO_REFRESH_SECONDS = 3.0
+LOCAL_COMMIT_POLL_SECONDS = 3.0
+REMOTE_COMMIT_POLL_SECONDS = 30.0
 STATUS_ANIMATION_SECONDS = 0.35
 
 
@@ -218,8 +220,8 @@ class ResultLoadScreen(ModalScreen[Path | None]):
 
 
 class CommitQuizApp(App):
-    TITLE = "Commit Diff Quiz"
-    SUB_TITLE = "Textual + LangGraph"
+    TITLE = "Git Study"
+    SUB_TITLE = "Learn programming through Git history"
 
     CSS = """
     Screen {
@@ -512,7 +514,8 @@ class CommitQuizApp(App):
         self.commits = initial_snapshot["commits"]
         self.has_more_commits = initial_snapshot["has_more_commits"]
         self.total_commit_count = initial_snapshot["total_commit_count"]
-        self.selected_commit_indices: set[int] = set()
+        self.selected_range_start_index: int | None = None
+        self.selected_range_end_index: int | None = None
         self.unseen_auto_refresh_commit_shas: set[str] = set()
         self.commit_detail_cache: dict[str, str] = {}
         self.last_quit_attempt_at = 0.0
@@ -521,6 +524,7 @@ class CommitQuizApp(App):
         self._last_seen_head_sha = self.commits[0]["sha"] if self.commits else ""
         self._last_seen_total_commit_count = self.total_commit_count
         self._last_seen_repo_key = "local"
+        self._last_remote_refresh_check_at = 0.0
         self.result_content = (
             "왼쪽에서 커밋을 선택하고 Generate Quiz를 누르면 결과가 여기에 표시됩니다."
         )
@@ -576,7 +580,7 @@ class CommitQuizApp(App):
                                     "Auto Fallback", id="mode-auto", value=True
                                 )
                                 yield RadioButton("Latest Only", id="mode-latest")
-                                yield RadioButton("Selected Commit", id="mode-selected")
+                                yield RadioButton("Selected Range", id="mode-selected")
                         with Vertical(classes="option-group"):
                             yield Label("Difficulty", classes="help-text")
                             with RadioSet(id="difficulty", compact=True):
@@ -589,6 +593,9 @@ class CommitQuizApp(App):
                             yield Label("Style", classes="help-text")
                             with RadioSet(id="quiz-style", compact=True):
                                 yield RadioButton("Mixed", id="style-mixed", value=True)
+                                yield RadioButton(
+                                    "Study Session", id="style-study_session"
+                                )
                                 yield RadioButton(
                                     "Multiple Choice", id="style-multiple_choice"
                                 )
@@ -649,7 +656,7 @@ class CommitQuizApp(App):
         self._previous_sigint_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self._handle_sigint)
         self.set_interval(0.1, self._poll_sigint)
-        self.set_interval(AUTO_REFRESH_SECONDS, self._poll_commit_updates)
+        self.set_interval(LOCAL_COMMIT_POLL_SECONDS, self._poll_commit_updates)
         self.set_interval(STATUS_ANIMATION_SECONDS, self._animate_status)
         self._update_repo_context()
         commit_list = self.query_one("#commit-list", ListView)
@@ -687,8 +694,12 @@ class CommitQuizApp(App):
     def _commit_label_text(self, index: int) -> Text:
         commit = self.commits[index]
         prefix = Text("   ")
-        if index in self.selected_commit_indices:
-            prefix = Text(" ✓ ", style="bold green")
+        if index == self.selected_range_start_index:
+            prefix = Text(" S ", style="bold green")
+        elif index == self.selected_range_end_index:
+            prefix = Text(" E ", style="bold green")
+        elif index in self._selected_commit_indices():
+            prefix = Text(" · ", style="green")
         line = Text()
         line.append_text(prefix)
         style = (
@@ -710,8 +721,15 @@ class CommitQuizApp(App):
         return line
 
     def _commit_panel_help_text(self) -> str:
+        selected_count = len(self._selected_commit_indices())
+        if self.selected_range_start_index is None:
+            selection_help = "Space로 시작 커밋 선택"
+        elif self.selected_range_end_index is None:
+            selection_help = "Space로 끝 커밋 선택"
+        else:
+            selection_help = f"범위 선택됨 ({selected_count} commits)"
         return (
-            f"Space로 여러 커밋 선택/해제 | "
+            f"{selection_help} | "
             f"Loaded {len(self.commits)}/{self.total_commit_count}"
         )
 
@@ -719,7 +737,8 @@ class CommitQuizApp(App):
         if not self.commits:
             return
         commit = self.commits[index]
-        selected_count = len(self.selected_commit_indices)
+        selected_count = len(self._selected_commit_indices())
+        range_summary = self._selected_range_summary()
         status = self.query_one("#status", Static)
         status.update(
             "\n".join(
@@ -728,7 +747,8 @@ class CommitQuizApp(App):
                     f"제목: {commit['subject']}",
                     f"작성자: {commit['author']}",
                     f"날짜: {commit['date']}",
-                    f"멀티 선택 개수: {selected_count}",
+                    f"선택 범위 개수: {selected_count}",
+                    f"범위: {range_summary}",
                 ]
             )
         )
@@ -803,12 +823,13 @@ class CommitQuizApp(App):
         self._last_seen_head_sha = ""
         self._last_seen_total_commit_count = 0
         self._last_seen_repo_key = self._current_repo_key()
+        self._last_remote_refresh_check_at = 0.0
 
     def _load_selected_repo(self, announce: str) -> None:
         self._update_repo_context()
         self._reset_repo_tracking()
         self.commit_detail_cache.clear()
-        self.selected_commit_indices.clear()
+        self._clear_selected_range()
         self.selected_commit_index = 0
         if (
             self._current_repo_source() == "github"
@@ -850,10 +871,36 @@ class CommitQuizApp(App):
             return None
         return self.commits[self.selected_commit_index]["sha"]
 
+    def _selected_commit_indices(self) -> set[int]:
+        if self.selected_range_start_index is None:
+            return set()
+        if self.selected_range_end_index is None:
+            return {self.selected_range_start_index}
+        start = min(self.selected_range_start_index, self.selected_range_end_index)
+        end = max(self.selected_range_start_index, self.selected_range_end_index)
+        return set(range(start, end + 1))
+
     def _selected_commit_shas(self) -> list[str]:
         return [
-            self.commits[index]["sha"] for index in sorted(self.selected_commit_indices)
+            self.commits[index]["sha"] for index in sorted(self._selected_commit_indices())
         ]
+
+    def _clear_selected_range(self) -> None:
+        self.selected_range_start_index = None
+        self.selected_range_end_index = None
+
+    def _selected_range_summary(self) -> str:
+        if self.selected_range_start_index is None:
+            return "없음"
+        start_commit = self.commits[self.selected_range_start_index]
+        if self.selected_range_end_index is None:
+            return f"시작 {start_commit['short_sha']}"
+        end_commit = self.commits[self.selected_range_end_index]
+        selected_count = len(self._selected_commit_indices())
+        return (
+            f"{start_commit['short_sha']} ~ {end_commit['short_sha']} "
+            f"({selected_count} commits)"
+        )
 
     def _set_result(self, content: str) -> None:
         self.result_content = content
@@ -1011,11 +1058,23 @@ class CommitQuizApp(App):
         mark_new_commits: bool = False,
     ) -> None:
         previous_commit_shas = {commit["sha"] for commit in self.commits}
-        previous_selected_shas = {
+        previous_selected_shas = [
             self.commits[index]["sha"]
-            for index in self.selected_commit_indices
+            for index in sorted(self._selected_commit_indices())
             if index < len(self.commits)
-        }
+        ]
+        previous_start_sha = (
+            self.commits[self.selected_range_start_index]["sha"]
+            if self.selected_range_start_index is not None
+            and self.selected_range_start_index < len(self.commits)
+            else None
+        )
+        previous_end_sha = (
+            self.commits[self.selected_range_end_index]["sha"]
+            if self.selected_range_end_index is not None
+            and self.selected_range_end_index < len(self.commits)
+            else None
+        )
         previously_highlighted_sha = None
         if self.commits and self.selected_commit_index < len(self.commits):
             previously_highlighted_sha = self.commits[self.selected_commit_index]["sha"]
@@ -1031,11 +1090,25 @@ class CommitQuizApp(App):
                 if commit["sha"] not in previous_commit_shas:
                     self.unseen_auto_refresh_commit_shas.add(commit["sha"])
 
-        self.selected_commit_indices = {
-            index
-            for index, commit in enumerate(self.commits)
-            if commit["sha"] in previous_selected_shas
-        }
+        sha_to_index = {commit["sha"]: index for index, commit in enumerate(self.commits)}
+        self.selected_range_start_index = (
+            sha_to_index.get(previous_start_sha) if previous_start_sha else None
+        )
+        self.selected_range_end_index = (
+            sha_to_index.get(previous_end_sha) if previous_end_sha else None
+        )
+
+        if (
+            previous_selected_shas
+            and self.selected_range_start_index is None
+            and self.selected_range_end_index is None
+        ):
+            surviving_indices = [
+                sha_to_index[sha] for sha in previous_selected_shas if sha in sha_to_index
+            ]
+            if surviving_indices:
+                self.selected_range_start_index = min(surviving_indices)
+                self.selected_range_end_index = max(surviving_indices)
 
         if previously_highlighted_sha:
             for index, commit in enumerate(self.commits):
@@ -1078,11 +1151,24 @@ class CommitQuizApp(App):
             self._last_seen_repo_key = current_repo_key
         repo_args = self._repo_args()
         self._update_repo_context()
+        previous_total_commit_count = self.total_commit_count
         try:
             snapshot = get_commit_list_snapshot(
                 limit=self.commit_list_limit,
                 **repo_args,
             )
+            if mark_new_commits and previous_total_commit_count:
+                new_commit_count = max(
+                    0, snapshot["total_commit_count"] - previous_total_commit_count
+                )
+                if new_commit_count:
+                    target_limit = self.commit_list_limit + new_commit_count
+                    if target_limit != self.commit_list_limit:
+                        self.commit_list_limit = target_limit
+                        snapshot = get_commit_list_snapshot(
+                            limit=self.commit_list_limit,
+                            **repo_args,
+                        )
         except Exception as exc:
             self.commits = []
             self.has_more_commits = False
@@ -1186,28 +1272,30 @@ class CommitQuizApp(App):
             self._last_seen_repo_key = current_repo_key
             self._last_seen_head_sha = ""
             self._last_seen_total_commit_count = 0
+            self._last_remote_refresh_check_at = 0.0
             return
+
+        if self._current_repo_source() == "github":
+            now = time.monotonic()
+            if (
+                self._last_remote_refresh_check_at
+                and now - self._last_remote_refresh_check_at < REMOTE_COMMIT_POLL_SECONDS
+            ):
+                return
+            self._last_remote_refresh_check_at = now
+
         repo_args = self._repo_args()
         try:
-            snapshot = get_commit_list_snapshot(limit=1, **repo_args)
-            latest = snapshot["commits"]
-            latest_head_sha = latest[0]["sha"] if latest else ""
-            latest_total = snapshot["total_commit_count"]
+            latest = get_latest_commit_head(**repo_args)
+            latest_head_sha = latest["sha"] if latest else ""
         except Exception:
             return
 
-        if not self._last_seen_head_sha or self._last_seen_total_commit_count == 0:
+        if not self._last_seen_head_sha:
             self._last_seen_head_sha = latest_head_sha
-            self._last_seen_total_commit_count = latest_total
             return
 
-        if (
-            latest_head_sha != self._last_seen_head_sha
-            or latest_total != self._last_seen_total_commit_count
-        ):
-            new_commit_count = max(0, latest_total - self._last_seen_total_commit_count)
-            if new_commit_count:
-                self.commit_list_limit += new_commit_count
+        if latest_head_sha != self._last_seen_head_sha:
             self._reload_commit_data(
                 "새 커밋을 감지해 목록을 갱신했습니다.",
                 mark_new_commits=True,
@@ -1221,6 +1309,12 @@ class CommitQuizApp(App):
         if event.key == "shift+tab":
             event.stop()
             self.action_focus_previous_section()
+            return
+        if event.key in {"pageup", "pagedown"}:
+            commit_list = self.query_one("#commit-list", ListView)
+            if self.focused is commit_list and len(commit_list.children) > 0:
+                event.stop()
+                commit_list.index = 0 if event.key == "pageup" else len(commit_list.children) - 1
             return
         if event.key == "space":
             focused = self.focused
@@ -1334,15 +1428,20 @@ class CommitQuizApp(App):
         if index == len(self.commits) + 1:
             self.action_load_all_commits()
             return
-        if index in self.selected_commit_indices:
-            self.selected_commit_indices.remove(index)
+        if self.selected_range_start_index is None:
+            self.selected_range_start_index = index
+            self.selected_range_end_index = None
         else:
-            self.selected_commit_indices.add(index)
+            if index == self.selected_range_start_index:
+                self._clear_selected_range()
+            else:
+                self.selected_range_end_index = index
         self._refresh_commit_list_labels()
+        self._update_commit_panel_help()
         self._show_commit_summary(index)
 
     def action_reload_commits(self) -> None:
-        self.selected_commit_indices.clear()
+        self._clear_selected_range()
         self.commit_detail_cache.clear()
         self.selected_commit_index = 0
         self._reload_commit_data("커밋 목록을 새로고침했습니다.")

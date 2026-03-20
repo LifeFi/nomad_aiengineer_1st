@@ -45,6 +45,14 @@ class CommitListSnapshot(TypedDict):
     total_commit_count: int
 
 
+class CommitHead(TypedDict):
+    sha: str
+    short_sha: str
+    subject: str
+    author: str
+    date: str
+
+
 def sanitize_diff(raw_diff: str) -> str:
     if not raw_diff.strip():
         return ""
@@ -129,6 +137,24 @@ def list_recent_commits(
         github_repo_url=github_repo_url,
         refresh_remote=refresh_remote,
     )["commits"]
+
+
+def get_latest_commit_head(
+    repo_source: Literal["local", "github"] = "local",
+    github_repo_url: str | None = None,
+    refresh_remote: bool = True,
+) -> CommitHead | None:
+    repo = get_repo(repo_source, github_repo_url, refresh_remote=refresh_remote)
+    commit = next(repo.iter_commits(max_count=1), None)
+    if commit is None:
+        return None
+    return {
+        "sha": commit.hexsha,
+        "short_sha": commit.hexsha[:7],
+        "subject": commit.summary,
+        "author": str(commit.author),
+        "date": commit.committed_datetime.isoformat(),
+    }
 
 
 def has_more_commits(
@@ -260,6 +286,10 @@ def extract_patch_text(commit) -> str:
         diff_index = commit.parents[0].diff(commit, create_patch=True)
     else:
         diff_index = commit.diff(NULL_TREE, create_patch=True)
+    return build_patch_text_from_diff_index(diff_index)
+
+
+def build_patch_text_from_diff_index(diff_index) -> str:
     patches: list[str] = []
 
     for diff in diff_index:
@@ -285,12 +315,24 @@ def extract_patch_text(commit) -> str:
     return "\n\n".join(patches)
 
 
+def extract_range_patch_text(base_commit, target_commit) -> str:
+    diff_index = (
+        target_commit.diff(NULL_TREE, create_patch=True)
+        if base_commit is NULL_TREE
+        else base_commit.diff(target_commit, create_patch=True)
+    )
+    return build_patch_text_from_diff_index(diff_index)
+
+
 def get_changed_file_paths(commit) -> list[str]:
     if commit.parents:
         diff_index = commit.parents[0].diff(commit, create_patch=False)
     else:
         diff_index = commit.diff(NULL_TREE, create_patch=False)
+    return get_changed_file_paths_from_diff_index(diff_index)
 
+
+def get_changed_file_paths_from_diff_index(diff_index) -> list[str]:
     paths: list[str] = []
     for diff in diff_index:
         path = diff.b_path or diff.a_path
@@ -301,12 +343,38 @@ def get_changed_file_paths(commit) -> list[str]:
     return paths
 
 
+def get_range_changed_file_paths(base_commit, target_commit) -> list[str]:
+    diff_index = (
+        target_commit.diff(NULL_TREE, create_patch=False)
+        if base_commit is NULL_TREE
+        else base_commit.diff(target_commit, create_patch=False)
+    )
+    return get_changed_file_paths_from_diff_index(diff_index)
+
+
 def build_file_context_text(commit, repo: Repo) -> str:
     file_contexts: list[str] = []
 
     for path in get_changed_file_paths(commit)[:MAX_FILE_CONTEXT_FILES]:
         try:
             content = get_file_content_at_commit(repo, commit.hexsha, path)
+        except Exception:
+            continue
+
+        file_contexts.append(format_file_context_block(path, content))
+
+    combined = "\n\n".join(file_contexts)
+    return combined[:MAX_FILE_CONTEXT_CHARS].strip()
+
+
+def build_range_file_context_text(base_commit, target_commit, repo: Repo) -> str:
+    file_contexts: list[str] = []
+
+    for path in get_range_changed_file_paths(base_commit, target_commit)[
+        :MAX_FILE_CONTEXT_FILES
+    ]:
+        try:
+            content = get_file_content_at_commit(repo, target_commit.hexsha, path)
         except Exception:
             continue
 
@@ -329,9 +397,42 @@ def build_commit_context(commit, selected_reason: str, repo: Repo) -> dict[str, 
     }
 
 
+def build_range_changed_files_summary(base_commit, target_commit) -> str:
+    diff_index = (
+        target_commit.diff(NULL_TREE, create_patch=False)
+        if base_commit is NULL_TREE
+        else base_commit.diff(target_commit, create_patch=False)
+    )
+    lines: list[str] = []
+    for diff in diff_index:
+        path = diff.b_path or diff.a_path or "unknown"
+        change_type = diff.change_type.upper() if diff.change_type else "M"
+        lines.append(f"- [{change_type}] {path}")
+    return "\n".join(lines)
+
+
 def build_multi_commit_context(commits, selected_reason: str, repo: Repo) -> dict[str, str]:
     parts: list[dict[str, str]] = [
         build_commit_context(commit, selected_reason, repo) for commit in commits
+    ]
+    newest_commit = commits[0]
+    oldest_commit = commits[-1]
+    base_commit = oldest_commit.parents[0] if oldest_commit.parents else NULL_TREE
+    range_diff_text = sanitize_diff(extract_range_patch_text(base_commit, newest_commit))
+    range_changed_files_summary = build_range_changed_files_summary(
+        base_commit, newest_commit
+    )
+    range_file_context_text = build_range_file_context_text(
+        base_commit, newest_commit, repo
+    )
+    per_commit_changed_files = [
+        f"[{part['commit_sha'][:7]}] {part['commit_subject']}\n{part['changed_files_summary']}"
+        for part in parts
+    ]
+    per_commit_file_context = [
+        f"# Commit {part['commit_sha'][:7]} - {part['commit_subject']}\n{part['file_context_text']}"
+        for part in parts
+        if part["file_context_text"]
     ]
     return {
         "commit_sha": ", ".join(part["commit_sha"][:7] for part in parts),
@@ -339,26 +440,18 @@ def build_multi_commit_context(commits, selected_reason: str, repo: Repo) -> dic
         "commit_author": ", ".join(sorted({part["commit_author"] for part in parts})),
         "commit_date": " ~ ".join([parts[-1]["commit_date"], parts[0]["commit_date"]]),
         "changed_files_summary": "\n\n".join(
-            [
-                f"[{part['commit_sha'][:7]}] {part['commit_subject']}\n{part['changed_files_summary']}"
-                for part in parts
-            ]
+            ["[Combined range changed files]", range_changed_files_summary or "No changed files.", "", "[Per-commit breakdown]"]
+            + per_commit_changed_files
         ),
-        "diff_text": sanitize_diff(
-            "\n\n".join(
-                [
-                    f"# Commit {part['commit_sha'][:7]} - {part['commit_subject']}\n{part['diff_text']}"
-                    for part in parts
-                    if part["diff_text"]
-                ]
-            )
-        ),
+        "diff_text": range_diff_text,
         "file_context_text": "\n\n".join(
             [
-                f"# Commit {part['commit_sha'][:7]} - {part['commit_subject']}\n{part['file_context_text']}"
-                for part in parts
-                if part["file_context_text"]
+                "[Combined range file context]",
+                range_file_context_text or "No readable changed file content was extracted.",
+                "",
+                "[Per-commit file context]",
             ]
+            + per_commit_file_context
         )[:MAX_FILE_CONTEXT_CHARS].strip(),
         "selected_reason": selected_reason,
     }
@@ -460,8 +553,10 @@ def build_quiz(state: State) -> State:
             "참고: 사용자가 선택한 여러 커밋의 흐름을 합쳐 퀴즈를 생성합니다.\n\n"
         )
 
+    output_mode = "study_session" if quiz_style == "study_session" else "quiz"
+
     prompt = f"""
-You are a senior engineer creating a study quiz from a Git commit diff.
+You are a senior engineer creating a deep code-study artifact from Git changes.
 
 User request:
 {user_request}
@@ -485,18 +580,39 @@ Changed file full content context:
 
 Instructions:
 1. Respond in Korean unless the user explicitly requested another language.
-2. Create 4 quiz questions based only on the commit metadata, diff, and changed-file full content context above.
+2. Base everything only on the commit metadata, diff, and changed-file full content context above.
 3. Difficulty should be: {difficulty}
-4. Quiz style preference should be: {quiz_style}
-5. Mix question styles: at least one conceptual question, one code-reading question, one intent/purpose question, and one risk/regression question.
-6. For each question, include:
-   - source_code: include a relevant source snippet in a fenced markdown code block using ``` ```
-   - question
-   - answer
-   - short explanation
-7. Use markdown headings and fenced code blocks so the result renders cleanly in a markdown viewer.
-8. If the diff does not contain enough context for one question, say that clearly instead of inventing details.
-9. End with a short "이 커밋에서 배울 포인트" section with 3 concise bullets.
+4. Preferred output mode is: {output_mode}
+5. Do not create trivia questions that can be answered by spotting a single changed line.
+6. Focus on intent, architecture, behavior change, code-reading, trade-offs, and regression risk.
+7. Make the learner read code and reason across the overall change, not just memorize patch details.
+8. When multiple files are involved, connect them explicitly. If the data is insufficient, say so instead of inventing details.
+9. Use markdown headings and fenced code blocks so the result renders cleanly in a markdown viewer.
+
+Output requirements:
+- Start with `## 변경 개요` and summarize the overall purpose of the change in 3-5 bullets.
+- Then add `## 먼저 볼 코드` with 2-4 key code snippets in fenced code blocks.
+- Then add `## 학습 질문`.
+- Write exactly 4 questions.
+- Across the 4 questions, cover:
+  - one intent/purpose question
+  - one code-reading question
+  - one behavior-change question
+  - one risk/regression or design trade-off question
+- For each question, include:
+  - `### 질문 N`
+  - `핵심 코드`
+  - a relevant fenced code block
+  - `질문`
+  - `정답`
+  - `해설`
+  - `코드 근거`
+- The answer and explanation should reference the broader flow of the change whenever possible.
+- If quiz_style is `multiple_choice`, make at least 2 of the 4 questions multiple-choice.
+- If quiz_style is `short_answer`, make at least 2 of the 4 questions short-answer.
+- If quiz_style is `conceptual`, bias toward design intent and trade-offs.
+- If quiz_style is `study_session`, make the overall tone feel like a guided code-reading session rather than a test.
+- End with `## 이 변화에서 배울 점` and 3 concise bullets.
 """
 
     response = get_llm().invoke(prompt)
