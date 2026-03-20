@@ -1,3 +1,4 @@
+import json
 import time
 import signal
 from pathlib import Path
@@ -43,11 +44,15 @@ QUIT_CONFIRM_SECONDS = 1.5
 LOCAL_COMMIT_POLL_SECONDS = 3.0
 REMOTE_COMMIT_POLL_SECONDS = 30.0
 STATUS_ANIMATION_SECONDS = 0.35
+APP_RUNTIME_DIR = Path(__file__).resolve().parents[2] / ".git-study"
+APP_STATE_PATH = APP_RUNTIME_DIR / "state.json"
+QUIZ_OUTPUT_DIR = APP_RUNTIME_DIR / "outputs"
 
 
 class QuizGenerated(Message):
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, created_at: str) -> None:
         self.content = content
+        self.created_at = created_at
         super().__init__()
 
 
@@ -504,13 +509,31 @@ class CommitQuizApp(App):
     def __init__(self) -> None:
         super().__init__()
         self.commit_list_limit = DEFAULT_COMMIT_LIST_LIMIT
-        self.repo_source = "local"
-        self.github_repo_url = ""
-        initial_snapshot = get_commit_list_snapshot(
-            limit=self.commit_list_limit,
-            repo_source=self.repo_source,
-            github_repo_url=None,
-        )
+        app_state = self._load_app_state()
+        self.repo_source = app_state.get("repo_source", "local")
+        self.github_repo_url = app_state.get("github_repo_url", "")
+        self.saved_commit_mode = app_state.get("commit_mode", "auto")
+        self.saved_difficulty = app_state.get("difficulty", "medium")
+        self.saved_quiz_style = app_state.get("quiz_style", "mixed")
+        self.saved_request = app_state.get("request_text", DEFAULT_REQUEST)
+        initial_repo_source = self.repo_source
+        initial_github_repo_url = self.github_repo_url or None
+        if initial_repo_source == "github" and not initial_github_repo_url:
+            initial_repo_source = "local"
+            self.repo_source = "local"
+        try:
+            initial_snapshot = get_commit_list_snapshot(
+                limit=self.commit_list_limit,
+                repo_source=initial_repo_source,
+                github_repo_url=initial_github_repo_url,
+            )
+        except Exception:
+            initial_snapshot = get_commit_list_snapshot(
+                limit=self.commit_list_limit,
+                repo_source="local",
+                github_repo_url=None,
+            )
+            self.repo_source = "local"
         self.commits = initial_snapshot["commits"]
         self.has_more_commits = initial_snapshot["has_more_commits"]
         self.total_commit_count = initial_snapshot["total_commit_count"]
@@ -529,6 +552,7 @@ class CommitQuizApp(App):
             "왼쪽에서 커밋을 선택하고 Generate Quiz를 누르면 결과가 여기에 표시됩니다."
         )
         self.result_view_mode = "markdown"
+        self.result_metadata_expanded = False
         self._status_animation_enabled = False
         self._status_animation_frame = 0
         self._status_animation_base = "퀴즈 굽는중"
@@ -541,12 +565,19 @@ class CommitQuizApp(App):
             with Horizontal(id="repo-bar-top"):
                 yield Label("Repository", id="repo-bar-title")
                 with RadioSet(id="repo-source", classes="mode-group", compact=True):
-                    yield RadioButton("Local .git", id="repo-local", value=True)
-                    yield RadioButton("GitHub Repo", id="repo-github")
+                    yield RadioButton(
+                        "Local .git", id="repo-local", value=self.repo_source == "local"
+                    )
+                    yield RadioButton(
+                        "GitHub Repo",
+                        id="repo-github",
+                        value=self.repo_source == "github",
+                    )
             with Horizontal(id="repo-bar-bottom"):
                 yield Input(
                     placeholder="https://github.com/nomadcoders/ai-agents-masterclass",
                     id="repo-location",
+                    value=self.github_repo_url,
                 )
                 yield Button(
                     "Open", id="repo-open", classes="result-tool result-action"
@@ -577,34 +608,67 @@ class CommitQuizApp(App):
                                 id="commit-mode", classes="mode-group", compact=True
                             ):
                                 yield RadioButton(
-                                    "Auto Fallback", id="mode-auto", value=True
+                                    "Auto Fallback",
+                                    id="mode-auto",
+                                    value=self.saved_commit_mode == "auto",
                                 )
-                                yield RadioButton("Latest Only", id="mode-latest")
-                                yield RadioButton("Selected Range", id="mode-selected")
+                                yield RadioButton(
+                                    "Latest Only",
+                                    id="mode-latest",
+                                    value=self.saved_commit_mode == "latest",
+                                )
+                                yield RadioButton(
+                                    "Selected Range",
+                                    id="mode-selected",
+                                    value=self.saved_commit_mode == "selected",
+                                )
                         with Vertical(classes="option-group"):
                             yield Label("Difficulty", classes="help-text")
                             with RadioSet(id="difficulty", compact=True):
-                                yield RadioButton("Easy", id="difficulty-easy")
                                 yield RadioButton(
-                                    "Medium", id="difficulty-medium", value=True
+                                    "Easy",
+                                    id="difficulty-easy",
+                                    value=self.saved_difficulty == "easy",
                                 )
-                                yield RadioButton("Hard", id="difficulty-hard")
+                                yield RadioButton(
+                                    "Medium",
+                                    id="difficulty-medium",
+                                    value=self.saved_difficulty == "medium",
+                                )
+                                yield RadioButton(
+                                    "Hard",
+                                    id="difficulty-hard",
+                                    value=self.saved_difficulty == "hard",
+                                )
                         with Vertical(classes="option-group"):
                             yield Label("Style", classes="help-text")
                             with RadioSet(id="quiz-style", compact=True):
-                                yield RadioButton("Mixed", id="style-mixed", value=True)
+                                yield RadioButton(
+                                    "Mixed",
+                                    id="style-mixed",
+                                    value=self.saved_quiz_style == "mixed",
+                                )
                                 yield RadioButton(
                                     "Study Session", id="style-study_session"
+                                    , value=self.saved_quiz_style == "study_session"
                                 )
                                 yield RadioButton(
-                                    "Multiple Choice", id="style-multiple_choice"
+                                    "Multiple Choice",
+                                    id="style-multiple_choice",
+                                    value=self.saved_quiz_style == "multiple_choice",
                                 )
                                 yield RadioButton(
-                                    "Short Answer", id="style-short_answer"
+                                    "Short Answer",
+                                    id="style-short_answer",
+                                    value=self.saved_quiz_style == "short_answer",
                                 )
-                                yield RadioButton("Conceptual", id="style-conceptual")
+                                yield RadioButton(
+                                    "Conceptual",
+                                    id="style-conceptual",
+                                    value=self.saved_quiz_style == "conceptual",
+                                )
                     yield Label("Additional Request", classes="help-text")
-                    yield TextArea(DEFAULT_REQUEST, id="request-input")
+                    yield TextArea(self.saved_request, id="request-input")
                     yield Static("준비됨", id="status")
                 with Vertical(id="result-panel"):
                     with Horizontal(id="result-header"):
@@ -628,6 +692,11 @@ class CommitQuizApp(App):
                                 )
                         yield Static("", id="result-header-spacer")
                         with Horizontal(id="result-actions-right"):
+                            yield Button(
+                                "meta",
+                                id="result-meta-toggle",
+                                classes="result-tool result-action",
+                            )
                             with Horizontal(id="result-mode-group"):
                                 yield Button(
                                     "md",
@@ -666,6 +735,7 @@ class CommitQuizApp(App):
             self._update_commit_detail(0)
             commit_list.focus()
         self._set_result_view_mode(self.result_view_mode)
+        self._save_app_state()
 
     def on_unmount(self) -> None:
         if self._previous_sigint_handler is not None:
@@ -818,6 +888,64 @@ class CommitQuizApp(App):
             return "local"
         return f"github:{self._current_github_repo_url() or ''}"
 
+    def _load_app_state(self) -> dict[str, str]:
+        if not APP_STATE_PATH.exists():
+            return {}
+        try:
+            payload = json.loads(APP_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        repo_source = payload.get("repo_source")
+        github_repo_url = payload.get("github_repo_url")
+        commit_mode = payload.get("commit_mode")
+        difficulty = payload.get("difficulty")
+        quiz_style = payload.get("quiz_style")
+        request_text = payload.get("request_text")
+        return {
+            "repo_source": repo_source if repo_source in {"local", "github"} else "local",
+            "github_repo_url": github_repo_url if isinstance(github_repo_url, str) else "",
+            "commit_mode": (
+                commit_mode if commit_mode in {"auto", "latest", "selected"} else "auto"
+            ),
+            "difficulty": (
+                difficulty if difficulty in {"easy", "medium", "hard"} else "medium"
+            ),
+            "quiz_style": (
+                quiz_style
+                if quiz_style
+                in {
+                    "mixed",
+                    "study_session",
+                    "multiple_choice",
+                    "short_answer",
+                    "conceptual",
+                }
+                else "mixed"
+            ),
+            "request_text": (
+                request_text if isinstance(request_text, str) and request_text else DEFAULT_REQUEST
+            ),
+        }
+
+    def _save_app_state(self) -> None:
+        APP_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "repo_source": self._current_repo_source(),
+            "github_repo_url": self.github_repo_url,
+            "commit_mode": self._current_commit_mode(),
+            "difficulty": self._current_difficulty(),
+            "quiz_style": self._current_quiz_style(),
+            "request_text": self.query_one("#request-input", TextArea).text
+            if self.is_mounted
+            else self.saved_request,
+        }
+        APP_STATE_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     def _reset_repo_tracking(self) -> None:
         self.commit_list_limit = DEFAULT_COMMIT_LIST_LIMIT
         self._last_seen_head_sha = ""
@@ -902,14 +1030,118 @@ class CommitQuizApp(App):
             f"({selected_count} commits)"
         )
 
+    def _current_repository_label(self) -> str:
+        if self._current_repo_source() == "github":
+            return self.github_repo_url or "unknown"
+        local_repo = get_repo(repo_source="local", refresh_remote=False)
+        return local_repo.working_tree_dir or str(Path.cwd())
+
+    def _result_metadata_block(self, extension: str, created_at: str | None = None) -> str:
+        selected_indices = sorted(self._selected_commit_indices())
+        selected_commit_lines = [
+            f"- {self.commits[index]['short_sha']}: {self.commits[index]['subject']}"
+            for index in selected_indices
+            if index < len(self.commits)
+        ]
+        highlighted_commit = (
+            self.commits[self.selected_commit_index]
+            if self.commits and self.selected_commit_index < len(self.commits)
+            else None
+        )
+        metadata_lines = [
+            f"created_at: {created_at or time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+            f"repo_source: {self._current_repo_source()}",
+            f"repository: {self._current_repository_label()}",
+            f"commit_mode: {self._current_commit_mode()}",
+            f"difficulty: {self._current_difficulty()}",
+            f"quiz_style: {self._current_quiz_style()}",
+            f"selected_range: {self._selected_range_summary()}",
+        ]
+        if highlighted_commit is not None:
+            metadata_lines.extend(
+                [
+                    f"highlighted_commit_sha: {highlighted_commit['sha']}",
+                    f"highlighted_commit_subject: {highlighted_commit['subject']}",
+                ]
+            )
+        if selected_commit_lines:
+            metadata_lines.append("selected_commits:")
+            metadata_lines.extend(selected_commit_lines)
+
+        if extension == "md":
+            return "\n".join(["---", *metadata_lines, "---", ""])
+        return "\n".join(["[metadata]", *metadata_lines, ""])
+
     def _set_result(self, content: str) -> None:
         self.result_content = content
+        has_metadata = self._split_result_metadata(content) is not None
+        if has_metadata:
+            self.result_metadata_expanded = False
         markdown_view = self.query_one("#result-markdown", LabeledMarkdownViewer)
-        markdown_view.document.update(content)
+        markdown_view.document.update(self._markdown_content_for_view(content))
         markdown_view.scroll_home(animate=False)
         plain_view = self.query_one("#result-plain", TextArea)
         plain_view.text = content
         plain_view.scroll_home(animate=False)
+        meta_button = self.query_one("#result-meta-toggle", Button)
+        meta_button.display = has_metadata
+        meta_button.label = "meta -" if self.result_metadata_expanded else "meta +"
+
+    def _markdown_content_for_view(self, content: str) -> str:
+        metadata_parts = self._split_result_metadata(content)
+        if metadata_parts is None:
+            return content
+
+        metadata_block, body = metadata_parts
+        if not metadata_block.strip():
+            return body
+
+        if not self.result_metadata_expanded:
+            return "\n".join(
+                [
+                    "## Metadata",
+                    "",
+                    "_접혀 있습니다. 상단의 `meta`를 눌러 펼칠 수 있습니다._",
+                    "",
+                    body,
+                ]
+            )
+
+        return "\n".join(
+            [
+                "## Metadata",
+                "",
+                "```yaml",
+                metadata_block,
+                "```",
+                "",
+                body,
+            ]
+        )
+
+    def _split_result_metadata(self, content: str) -> tuple[str, str] | None:
+        if content.startswith("---\n"):
+            parts = content.split("\n---\n", 1)
+            if len(parts) != 2:
+                return None
+            metadata_block = parts[0][4:]
+            body = parts[1].lstrip("\n")
+            return metadata_block, body
+
+        if content.startswith("[metadata]\n"):
+            lines = content.splitlines()
+            metadata_lines: list[str] = []
+            body_start = 1
+            for index in range(1, len(lines)):
+                line = lines[index]
+                if not line.strip():
+                    body_start = index + 1
+                    break
+                metadata_lines.append(line)
+            body = "\n".join(lines[body_start:])
+            return "\n".join(metadata_lines), body
+
+        return None
 
     def _set_result_view_mode(self, mode: str) -> None:
         self.result_view_mode = mode
@@ -917,19 +1149,21 @@ class CommitQuizApp(App):
         plain_view = self.query_one("#result-plain", TextArea)
         markdown_button = self.query_one("#result-mode-markdown", Button)
         plain_button = self.query_one("#result-mode-plain", Button)
+        meta_button = self.query_one("#result-meta-toggle", Button)
 
         is_markdown = mode == "markdown"
         markdown_view.display = is_markdown
         plain_view.display = not is_markdown
         markdown_button.set_class(is_markdown, "-active")
         plain_button.set_class(not is_markdown, "-active")
+        meta_button.display = is_markdown and self._split_result_metadata(self.result_content) is not None
 
     def _download_result(self) -> None:
         extension = "md" if self.result_view_mode == "markdown" else "txt"
-        filename = (
-            Path.cwd() / f"quiz-output-{time.strftime('%Y%m%d-%H%M%S')}.{extension}"
-        )
-        filename.write_text(self.result_content, encoding="utf-8")
+        QUIZ_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        filename = QUIZ_OUTPUT_DIR / f"quiz-output-{time.strftime('%Y%m%d-%H%M%S')}.{extension}"
+        file_content = self._result_content_for_save(extension)
+        filename.write_text(file_content, encoding="utf-8")
         self._set_status(f"결과를 저장했습니다: {filename.name}")
         self.notify(
             f"{filename.name} 파일로 저장했습니다.",
@@ -937,9 +1171,21 @@ class CommitQuizApp(App):
             timeout=2.0,
         )
 
+    def _result_content_for_save(self, extension: str) -> str:
+        metadata_parts = self._split_result_metadata(self.result_content)
+        if metadata_parts is None:
+            return self.result_content
+
+        metadata_block, body = metadata_parts
+        if extension == "md":
+            return self.result_content
+        return "\n".join(["[metadata]", metadata_block, "", body])
+
     def _saved_result_files(self) -> list[Path]:
+        if not QUIZ_OUTPUT_DIR.exists():
+            return []
         return sorted(
-            Path.cwd().glob("quiz-output-*.*"),
+            QUIZ_OUTPUT_DIR.glob("quiz-output-*.*"),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
@@ -962,7 +1208,7 @@ class CommitQuizApp(App):
         if not candidates:
             self._set_status("불러올 저장 파일이 없습니다.")
             self.notify(
-                "현재 폴더에 quiz-output-* 파일이 없습니다.",
+                "저장된 퀴즈 파일이 없습니다.",
                 title="Load Failed",
                 severity="warning",
                 timeout=2.0,
@@ -997,6 +1243,7 @@ class CommitQuizApp(App):
                 repo_location.value = self.github_repo_url
             repo_location.tooltip = None
             repo_open.label = "Open"
+        self._save_app_state()
 
     def _start_status_animation(self) -> None:
         self._status_animation_enabled = True
@@ -1201,6 +1448,7 @@ class CommitQuizApp(App):
             self.query_one("#result-generate", Button),
             self.query_one("#result-download", Button),
             self.query_one("#result-load", Button),
+            self.query_one("#result-meta-toggle", Button),
             self.query_one("#result-mode-markdown", Button),
             self.query_one("#result-mode-plain", Button),
             (
@@ -1342,6 +1590,10 @@ class CommitQuizApp(App):
                 event.stop()
                 self._download_result()
                 return
+            if focused is self.query_one("#result-meta-toggle", Button):
+                event.stop()
+                self._toggle_result_metadata()
+                return
 
     @on(ListView.Highlighted, "#commit-list")
     def handle_commit_highlight(self, event: ListView.Highlighted) -> None:
@@ -1381,12 +1633,17 @@ class CommitQuizApp(App):
     def handle_result_load(self) -> None:
         self._load_result()
 
+    @on(Button.Pressed, "#result-meta-toggle")
+    def handle_result_meta_toggle(self) -> None:
+        self._toggle_result_metadata()
+
     @on(Button.Pressed, "#repo-open")
     def handle_repo_open(self) -> None:
         self._load_selected_repo("저장소를 불러왔습니다.")
 
     @on(RadioSet.Changed, "#repo-source")
     def handle_repo_source_changed(self) -> None:
+        self.repo_source = self._current_repo_source()
         self._update_repo_context()
         if (
             self._current_repo_source() == "github"
@@ -1402,19 +1659,31 @@ class CommitQuizApp(App):
             return
         self._load_selected_repo("저장소를 불러왔습니다.")
 
+    @on(RadioSet.Changed, "#commit-mode")
+    @on(RadioSet.Changed, "#difficulty")
+    @on(RadioSet.Changed, "#quiz-style")
+    def handle_quiz_option_changed(self) -> None:
+        self._save_app_state()
+
     @on(Input.Submitted, "#repo-location")
     def handle_github_repo_url_submitted(self) -> None:
         self._update_repo_context()
         if self._current_repo_source() != "github":
             return
         self.github_repo_url = self._current_github_repo_url() or ""
+        self._save_app_state()
         self._load_selected_repo("GitHub 저장소를 불러왔습니다.")
 
     @on(Input.Changed, "#repo-location")
     def handle_github_repo_url_changed(self) -> None:
         if self._current_repo_source() == "github":
             self.github_repo_url = self._current_github_repo_url() or ""
+            self._save_app_state()
         self._update_repo_context()
+
+    @on(TextArea.Changed, "#request-input")
+    def handle_request_changed(self) -> None:
+        self._save_app_state()
 
     def action_toggle_commit_selection(self) -> None:
         if not self.commits:
@@ -1533,14 +1802,21 @@ class CommitQuizApp(App):
             return
 
         final_message = result["messages"][-1]
-        self.post_message(QuizGenerated(str(final_message.content)))
+        self.post_message(
+            QuizGenerated(
+                str(final_message.content),
+                time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            )
+        )
 
     @on(QuizGenerated)
     def handle_quiz_generated(self, message: QuizGenerated) -> None:
         self.query_one("#result-generate", Button).disabled = False
         self._stop_status_animation()
         self._set_status("완료")
-        self._set_result(message.content)
+        self._set_result(
+            f"{self._result_metadata_block('md', created_at=message.created_at)}\n{message.content}"
+        )
 
     @on(QuizFailed)
     def handle_quiz_failed(self, message: QuizFailed) -> None:
@@ -1548,6 +1824,17 @@ class CommitQuizApp(App):
         self._stop_status_animation()
         self._set_status("오류")
         self._set_result(message.error_message)
+
+    def _toggle_result_metadata(self) -> None:
+        if self._split_result_metadata(self.result_content) is None:
+            return
+        self.result_metadata_expanded = not self.result_metadata_expanded
+        meta_button = self.query_one("#result-meta-toggle", Button)
+        meta_button.label = "meta -" if self.result_metadata_expanded else "meta +"
+        if self.result_view_mode == "markdown":
+            markdown_view = self.query_one("#result-markdown", LabeledMarkdownViewer)
+            markdown_view.document.update(self._markdown_content_for_view(self.result_content))
+            markdown_view.scroll_home(animate=False)
 
     @on(RepoCommitsLoaded)
     def handle_repo_commits_loaded(self, message: RepoCommitsLoaded) -> None:

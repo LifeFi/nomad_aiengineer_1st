@@ -8,7 +8,7 @@
 - 변경된 파일의 해당 커밋 시점 전체 코드도 함께 읽어 퀴즈 컨텍스트로 사용합니다.
 - 바이너리 patch와 코드 hunk가 없는 변경은 자동으로 걸러냅니다.
 - `auto`, `latest`, `selected` 모드로 퀴즈 대상 커밋을 고를 수 있습니다.
-- 여러 커밋을 함께 선택해 하나의 흐름으로 묶어 퀴즈를 생성할 수 있습니다.
+- `selected` 모드에서는 시작(`S`)과 끝(`E`)을 잡아 그 사이 커밋 범위를 하나의 흐름으로 묶어 학습 세션을 만들 수 있습니다.
 - 로컬 `.git` 저장소뿐 아니라 GitHub 원격 저장소 URL도 지원합니다.
 - Textual TUI에서 커밋 탐색, 자동 새로고침, 멀티 선택, 결과 저장/불러오기를 지원합니다.
 
@@ -50,15 +50,18 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m git_study.tui
 - 자동 새로고침으로 새 커밋이 감지되면 목록에 반영됩니다.
 - 자동 새로고침으로 들어온 새 커밋은 다른 색으로 강조되고, 커서를 한 번 올리면 일반 색으로 돌아옵니다.
 - 왼쪽 커밋 리스트에서 항목을 이동하면 `Commit Detail` 패널에 SHA, 작성자, 변경 파일 요약, diff preview가 표시됩니다.
-- `Quiz Output`은 `md | plain` 전환을 지원합니다.
+- `Quiz Output`은 `meta +`, `md | plain` 전환을 지원합니다.
+- 퀴즈 생성 직후 결과 상단에 저장소, 커밋 범위, 옵션, `created_at` 메타데이터가 함께 포함됩니다.
+- `md` 뷰에서는 메타데이터가 기본적으로 접혀 있고, `meta +`로 펼칠 수 있습니다.
 - 결과는 `Save`로 파일 저장, `Load`로 저장된 퀴즈 파일 목록에서 다시 불러올 수 있습니다.
+- 저장 결과물은 `.git-study/outputs/`, 앱 상태는 `.git-study/state.json`에 저장됩니다.
 - 저장소 로딩 중에는 `Recent Commits` 영역에 `커밋 불러오는 중.` 애니메이션이 표시됩니다.
 - 퀴즈 생성 중에는 `Quiz Output` 영역에 `퀴즈 굽는중.` 애니메이션이 표시됩니다.
 
 ## TUI Controls
 
 - `Tab` / `Shift+Tab`: 섹션 간 포커스 이동
-- `Space`: 커밋 선택/해제, `Load More`, `Load All`, `Open`, `Gen`, `Save`, `Load`, `md`, `plain`
+- `Space`: 범위 시작/끝 선택, `Load More`, `Load All`, `Open`, `Gen`, `Save`, `Load`, `meta`, `md`, `plain`
 - `g`: 퀴즈 생성
 - `r`: 커밋 목록 새로고침
 - `q`: 종료
@@ -105,5 +108,5 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m git_study.tui
 - 실제 퀴즈 생성에는 `OPENAI_API_KEY`가 필요합니다.
 - `.env` 파일이 있으면 `load_dotenv()`로 자동 로드합니다.
 - `commit_mode`는 `auto`, `latest`, `selected`를 지원합니다.
-- `selected` 모드에서는 `requested_commit_sha` 또는 `requested_commit_shas`를 함께 넘기면 특정 커밋 하나 또는 여러 개 기준으로 퀴즈를 만들 수 있습니다.
+- `selected` 모드에서는 `requested_commit_shas`를 함께 넘기면 선택 범위를 기준으로 퀴즈를 만들 수 있습니다.
 - 원격 GitHub 저장소는 `.repo_cache/github` 아래에 캐시됩니다.
