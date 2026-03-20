@@ -105,6 +105,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m git_study.tui
 ## Notes
 
 - 패키지 이름은 `git-study`, 파이썬 패키지 경로는 `src/git_study` 입니다.
+- Textual TUI 코드는 `src/git_study/tui/` 패키지 아래에 정리되어 있습니다.
 - 실제 퀴즈 생성에는 `OPENAI_API_KEY`가 필요합니다.
 - `.env` 파일이 있으면 `load_dotenv()`로 자동 로드합니다.
 - `commit_mode`는 `auto`, `latest`, `selected`를 지원합니다.
