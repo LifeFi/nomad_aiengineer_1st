@@ -1,4 +1,5 @@
-from pathlib import PurePath
+import hashlib
+from pathlib import Path, PurePath
 from typing import Annotated, Literal, NotRequired, TypedDict
 
 from dotenv import load_dotenv
@@ -16,10 +17,13 @@ DEFAULT_COMMIT_LIST_LIMIT = 10
 MAX_FILE_CONTEXT_CHARS = 12_000
 MAX_FILE_CONTEXT_FILES = 5
 MAX_FILE_SNIPPET_CHARS = 3_000
+REMOTE_REPO_CACHE_DIR = Path(".repo_cache/github")
 
 
 class State(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
+    repo_source: NotRequired[Literal["local", "github"]]
+    github_repo_url: NotRequired[str]
     commit_mode: NotRequired[Literal["auto", "latest", "selected"]]
     requested_commit_sha: NotRequired[str]
     requested_commit_shas: NotRequired[list[str]]
@@ -33,6 +37,12 @@ class State(TypedDict):
     diff_text: str
     file_context_text: str
     selected_reason: str
+
+
+class CommitListSnapshot(TypedDict):
+    commits: list[dict[str, str]]
+    has_more_commits: bool
+    total_commit_count: int
 
 
 def sanitize_diff(raw_diff: str) -> str:
@@ -59,35 +69,121 @@ def sanitize_diff(raw_diff: str) -> str:
     return cleaned[:MAX_DIFF_CHARS].strip()
 
 
-def get_repo() -> Repo:
-    return Repo(".", search_parent_directories=True)
+def slugify_repo_url(github_repo_url: str) -> str:
+    normalized = normalize_github_repo_url(github_repo_url)
+    tail = normalized.split("github.com/")[-1].replace("/", "__")
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:8]
+    return f"{tail}--{digest}"
 
 
-def list_recent_commits(limit: int = DEFAULT_COMMIT_LIST_LIMIT) -> list[dict[str, str]]:
-    repo = get_repo()
-    commits = []
-    for commit in repo.iter_commits(max_count=limit):
-        commits.append(
-            {
-                "sha": commit.hexsha,
-                "short_sha": commit.hexsha[:7],
-                "subject": commit.summary,
-                "author": str(commit.author),
-                "date": commit.committed_datetime.isoformat(),
-            }
+def normalize_github_repo_url(github_repo_url: str) -> str:
+    normalized = github_repo_url.strip().rstrip("/")
+    if normalized.startswith("github.com/"):
+        normalized = f"https://{normalized}"
+    if not normalized.startswith(("http://", "https://")):
+        raise ValueError(
+            "GitHub 저장소 URL은 https://github.com/owner/repo 형식이어야 합니다."
         )
-    return commits
+    if "github.com/" not in normalized:
+        raise ValueError("현재는 GitHub 저장소 URL만 지원합니다.")
+    if not normalized.endswith(".git"):
+        normalized = f"{normalized}.git"
+    return normalized
 
 
-def has_more_commits(limit: int = DEFAULT_COMMIT_LIST_LIMIT) -> bool:
-    repo = get_repo()
-    commits = list(repo.iter_commits(max_count=limit + 1))
-    return len(commits) > limit
+def get_repo(
+    repo_source: Literal["local", "github"] = "local",
+    github_repo_url: str | None = None,
+    refresh_remote: bool = True,
+) -> Repo:
+    if repo_source == "local":
+        return Repo(".", search_parent_directories=True)
+
+    if not github_repo_url:
+        raise ValueError("github repo source requires github_repo_url")
+    github_repo_url = normalize_github_repo_url(github_repo_url)
+
+    cache_dir = REMOTE_REPO_CACHE_DIR / slugify_repo_url(github_repo_url)
+    cache_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    if cache_dir.exists():
+        repo = Repo(cache_dir)
+        origin = repo.remotes.origin
+        origin.set_url(github_repo_url)
+        if refresh_remote:
+            origin.fetch(prune=True)
+        return repo
+
+    return Repo.clone_from(github_repo_url, cache_dir)
 
 
-def count_total_commits() -> int:
-    repo = get_repo()
-    return sum(1 for _ in repo.iter_commits())
+def list_recent_commits(
+    limit: int = DEFAULT_COMMIT_LIST_LIMIT,
+    repo_source: Literal["local", "github"] = "local",
+    github_repo_url: str | None = None,
+    refresh_remote: bool = True,
+) -> list[dict[str, str]]:
+    return get_commit_list_snapshot(
+        limit=limit,
+        repo_source=repo_source,
+        github_repo_url=github_repo_url,
+        refresh_remote=refresh_remote,
+    )["commits"]
+
+
+def has_more_commits(
+    limit: int = DEFAULT_COMMIT_LIST_LIMIT,
+    repo_source: Literal["local", "github"] = "local",
+    github_repo_url: str | None = None,
+    refresh_remote: bool = True,
+) -> bool:
+    return get_commit_list_snapshot(
+        limit=limit,
+        repo_source=repo_source,
+        github_repo_url=github_repo_url,
+        refresh_remote=refresh_remote,
+    )["has_more_commits"]
+
+
+def count_total_commits(
+    repo_source: Literal["local", "github"] = "local",
+    github_repo_url: str | None = None,
+    refresh_remote: bool = True,
+) -> int:
+    return get_commit_list_snapshot(
+        repo_source=repo_source,
+        github_repo_url=github_repo_url,
+        refresh_remote=refresh_remote,
+    )["total_commit_count"]
+
+
+def get_commit_list_snapshot(
+    limit: int = DEFAULT_COMMIT_LIST_LIMIT,
+    repo_source: Literal["local", "github"] = "local",
+    github_repo_url: str | None = None,
+    refresh_remote: bool = True,
+) -> CommitListSnapshot:
+    repo = get_repo(repo_source, github_repo_url, refresh_remote=refresh_remote)
+    commits: list[dict[str, str]] = []
+    total_commit_count = 0
+
+    for total_commit_count, commit in enumerate(repo.iter_commits(), start=1):
+        if len(commits) < limit:
+            commits.append(
+                {
+                    "sha": commit.hexsha,
+                    "short_sha": commit.hexsha[:7],
+                    "subject": commit.summary,
+                    "author": str(commit.author),
+                    "date": commit.committed_datetime.isoformat(),
+                }
+            )
+
+    return {
+        "commits": commits,
+        "has_more_commits": total_commit_count > limit,
+        "total_commit_count": total_commit_count,
+    }
 
 
 def build_changed_files_summary(commit) -> str:
@@ -104,8 +200,7 @@ def build_changed_files_summary(commit) -> str:
     return "\n".join(lines)
 
 
-def get_file_content_at_commit(commit_sha: str, path: str) -> str:
-    repo = get_repo()
+def get_file_content_at_commit(repo: Repo, commit_sha: str, path: str) -> str:
     commit = repo.commit(commit_sha)
     blob = commit.tree / path
     return blob.data_stream.read().decode("utf-8", errors="replace")
@@ -206,12 +301,12 @@ def get_changed_file_paths(commit) -> list[str]:
     return paths
 
 
-def build_file_context_text(commit) -> str:
+def build_file_context_text(commit, repo: Repo) -> str:
     file_contexts: list[str] = []
 
     for path in get_changed_file_paths(commit)[:MAX_FILE_CONTEXT_FILES]:
         try:
-            content = get_file_content_at_commit(commit.hexsha, path)
+            content = get_file_content_at_commit(repo, commit.hexsha, path)
         except Exception:
             continue
 
@@ -221,7 +316,7 @@ def build_file_context_text(commit) -> str:
     return combined[:MAX_FILE_CONTEXT_CHARS].strip()
 
 
-def build_commit_context(commit, selected_reason: str) -> dict[str, str]:
+def build_commit_context(commit, selected_reason: str, repo: Repo) -> dict[str, str]:
     return {
         "commit_sha": commit.hexsha,
         "commit_subject": commit.summary,
@@ -229,14 +324,14 @@ def build_commit_context(commit, selected_reason: str) -> dict[str, str]:
         "commit_date": commit.committed_datetime.isoformat(),
         "changed_files_summary": build_changed_files_summary(commit),
         "diff_text": sanitize_diff(extract_patch_text(commit)),
-        "file_context_text": build_file_context_text(commit),
+        "file_context_text": build_file_context_text(commit, repo),
         "selected_reason": selected_reason,
     }
 
 
-def build_multi_commit_context(commits, selected_reason: str) -> dict[str, str]:
+def build_multi_commit_context(commits, selected_reason: str, repo: Repo) -> dict[str, str]:
     parts: list[dict[str, str]] = [
-        build_commit_context(commit, selected_reason) for commit in commits
+        build_commit_context(commit, selected_reason, repo) for commit in commits
     ]
     return {
         "commit_sha": ", ".join(part["commit_sha"][:7] for part in parts),
@@ -269,16 +364,24 @@ def build_multi_commit_context(commits, selected_reason: str) -> dict[str, str]:
     }
 
 
-def get_commit_by_sha(commit_sha: str):
-    return get_repo().commit(commit_sha)
+def get_commit_by_sha(
+    commit_sha: str,
+    repo_source: Literal["local", "github"] = "local",
+    github_repo_url: str | None = None,
+    refresh_remote: bool = True,
+):
+    repo = get_repo(repo_source, github_repo_url, refresh_remote=refresh_remote)
+    return repo.commit(commit_sha)
 
 
 def get_latest_commit_context(
     commit_mode: Literal["auto", "latest", "selected"] = "auto",
     requested_commit_sha: str | None = None,
     requested_commit_shas: list[str] | None = None,
+    repo_source: Literal["local", "github"] = "local",
+    github_repo_url: str | None = None,
 ) -> dict[str, str]:
-    repo = get_repo()
+    repo = get_repo(repo_source, github_repo_url)
 
     if commit_mode == "selected":
         commit_shas = requested_commit_shas or (
@@ -286,19 +389,19 @@ def get_latest_commit_context(
         )
         if not commit_shas:
             raise ValueError("selected mode requires at least one commit sha")
-        commits = [get_commit_by_sha(commit_sha) for commit_sha in commit_shas]
+        commits = [repo.commit(commit_sha) for commit_sha in commit_shas]
         if len(commits) == 1:
-            return build_commit_context(commits[0], "selected_commit")
-        return build_multi_commit_context(commits, "selected_commits")
+            return build_commit_context(commits[0], "selected_commit", repo)
+        return build_multi_commit_context(commits, "selected_commits", repo)
 
     commits = list(repo.iter_commits(max_count=MAX_COMMITS_TO_SCAN))
 
-    latest_context = build_commit_context(commits[0], "latest")
+    latest_context = build_commit_context(commits[0], "latest", repo)
     if commit_mode == "latest" or latest_context["diff_text"]:
         return latest_context
 
     for commit in commits[1:]:
-        context = build_commit_context(commit, "fallback_recent_text_commit")
+        context = build_commit_context(commit, "fallback_recent_text_commit", repo)
         if context["diff_text"]:
             return context
 
@@ -310,6 +413,8 @@ def get_llm():
 
 
 def collect_commit_context(state: State) -> State:
+    repo_source = state.get("repo_source", "local")
+    github_repo_url = state.get("github_repo_url")
     commit_mode = state.get("commit_mode", "auto")
     requested_commit_sha = state.get("requested_commit_sha")
     requested_commit_shas = state.get("requested_commit_shas")
@@ -317,6 +422,8 @@ def collect_commit_context(state: State) -> State:
         commit_mode,
         requested_commit_sha,
         requested_commit_shas,
+        repo_source,
+        github_repo_url,
     )
 
 

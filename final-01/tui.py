@@ -15,6 +15,7 @@ from textual.widgets import (
     Button,
     Footer,
     Header,
+    Input,
     Label,
     ListItem,
     ListView,
@@ -30,11 +31,9 @@ from textual.widgets._markdown import MarkdownFence, MarkdownTableOfContents
 from main import (
     DEFAULT_COMMIT_LIST_LIMIT,
     build_commit_context,
-    count_total_commits,
-    get_commit_by_sha,
+    get_commit_list_snapshot,
+    get_repo,
     graph,
-    has_more_commits,
-    list_recent_commits,
 )
 
 
@@ -51,6 +50,29 @@ class QuizGenerated(Message):
 
 
 class QuizFailed(Message):
+    def __init__(self, error_message: str) -> None:
+        self.error_message = error_message
+        super().__init__()
+
+
+class RepoCommitsLoaded(Message):
+    def __init__(
+        self,
+        commits: list[dict[str, str]],
+        has_more_commits: bool,
+        total_commit_count: int,
+        announce: str,
+        repo_key: str,
+    ) -> None:
+        self.commits = commits
+        self.has_more_commits = has_more_commits
+        self.total_commit_count = total_commit_count
+        self.announce = announce
+        self.repo_key = repo_key
+        super().__init__()
+
+
+class RepoCommitsFailed(Message):
     def __init__(self, error_message: str) -> None:
         self.error_message = error_message
         super().__init__()
@@ -204,6 +226,82 @@ class CommitQuizApp(App):
         layout: vertical;
     }
 
+    #repo-bar {
+        height: auto;
+        border: round $accent;
+        padding: 0 1;
+        margin: 0;
+        layout: vertical;
+    }
+
+    #repo-bar:focus-within {
+        border: round $success;
+    }
+
+    #repo-bar-top,
+    #repo-bar-bottom {
+        height: auto;
+        width: 1fr;
+        align: left middle;
+    }
+
+    #repo-bar-top {
+        margin-bottom: 1;
+    }
+
+    #repo-bar-title {
+        width: 10;
+        color: $accent;
+        text-style: bold;
+        margin-right: 1;
+    }
+
+    #repo-source {
+        width: auto;
+        layout: horizontal;
+        margin-right: 1;
+    }
+
+    #repo-source > RadioButton {
+        width: auto;
+        margin-right: 2;
+    }
+
+    #repo-location {
+        width: 1fr;
+        margin-right: 1;
+        height: 3;
+        min-height: 3;
+        margin-top: 0;
+        margin-bottom: 0;
+        padding: 0 1 0 1;
+    }
+
+    #repo-open {
+        width: auto;
+        min-width: 6;
+        margin-right: 1;
+        height: 3;
+        min-height: 3;
+        padding: 0;
+        background: transparent;
+        border: none;
+        border-bottom: solid transparent;
+        color: cyan;
+        text-style: bold;
+        content-align: center bottom;
+    }
+
+    #repo-open:hover,
+    #repo-open:focus {
+        background: transparent;
+        border: none;
+        border-bottom: solid cyan;
+        outline: none;
+        color: cyan;
+        text-style: bold;
+    }
+
     #body {
         height: 1fr;
     }
@@ -227,7 +325,7 @@ class CommitQuizApp(App):
     }
 
     #control-panel {
-        height: 11;
+        height: 8;
     }
 
     #result-panel {
@@ -247,11 +345,23 @@ class CommitQuizApp(App):
 
     .help-text {
         color: $text-muted;
-        margin-bottom: 1;
+        margin-bottom: 0;
+    }
+
+    RadioSet {
+        margin: 0;
+        padding: 0;
+    }
+
+    RadioSet > RadioButton {
+        padding-top: 0;
+        padding-bottom: 0;
+        margin-top: 0;
+        margin-bottom: 0;
     }
 
     .mode-group, .option-group {
-        margin: 0 0 1 0;
+        margin: 0;
     }
 
     .row {
@@ -260,7 +370,7 @@ class CommitQuizApp(App):
 
     #request-input {
         height: 5;
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
 
     #commit-detail-view {
@@ -268,13 +378,8 @@ class CommitQuizApp(App):
         margin-bottom: 0;
     }
 
-    #generate {
-        width: 100%;
-        margin-top: 1;
-    }
-
     #status {
-        margin-top: 1;
+        margin-top: 0;
         color: $text-muted;
     }
 
@@ -303,20 +408,27 @@ class CommitQuizApp(App):
         width: auto;
     }
 
-    #result-actions {
+    #result-actions-left,
+    #result-actions-right {
         width: auto;
         height: auto;
-        align: right middle;
+        align: left middle;
     }
 
     #result-header-spacer {
         width: 1fr;
     }
 
+    #result-command-group {
+        width: auto;
+        height: auto;
+        margin-left: 1;
+        padding: 0;
+    }
+
     #result-mode-group {
         width: auto;
         height: auto;
-        margin-right: 1;
         padding: 0;
     }
 
@@ -390,9 +502,16 @@ class CommitQuizApp(App):
     def __init__(self) -> None:
         super().__init__()
         self.commit_list_limit = DEFAULT_COMMIT_LIST_LIMIT
-        self.commits = list_recent_commits(limit=self.commit_list_limit)
-        self.has_more_commits = has_more_commits(self.commit_list_limit)
-        self.total_commit_count = count_total_commits()
+        self.repo_source = "local"
+        self.github_repo_url = ""
+        initial_snapshot = get_commit_list_snapshot(
+            limit=self.commit_list_limit,
+            repo_source=self.repo_source,
+            github_repo_url=None,
+        )
+        self.commits = initial_snapshot["commits"]
+        self.has_more_commits = initial_snapshot["has_more_commits"]
+        self.total_commit_count = initial_snapshot["total_commit_count"]
         self.selected_commit_indices: set[int] = set()
         self.unseen_auto_refresh_commit_shas: set[str] = set()
         self.commit_detail_cache: dict[str, str] = {}
@@ -401,22 +520,31 @@ class CommitQuizApp(App):
         self._pending_sigint = False
         self._last_seen_head_sha = self.commits[0]["sha"] if self.commits else ""
         self._last_seen_total_commit_count = self.total_commit_count
+        self._last_seen_repo_key = "local"
         self.result_content = (
             "왼쪽에서 커밋을 선택하고 Generate Quiz를 누르면 결과가 여기에 표시됩니다."
         )
         self.result_view_mode = "markdown"
         self._status_animation_enabled = False
         self._status_animation_frame = 0
-        self._status_animation_messages = [
-            "LangGraph 호출중",
-            "변경 내용을 분석중",
-            "퀴즈를 구성중",
-            "응답을 정리중",
-        ]
+        self._status_animation_base = "퀴즈 굽는중"
         self._result_animation_enabled = False
+        self._commit_list_loading_enabled = False
 
     def compose(self) -> ComposeResult:
         yield Header()
+        with Vertical(id="repo-bar"):
+            with Horizontal(id="repo-bar-top"):
+                yield Label("Repository", id="repo-bar-title")
+                with RadioSet(id="repo-source", classes="mode-group", compact=True):
+                    yield RadioButton("Local .git", id="repo-local", value=True)
+                    yield RadioButton("GitHub Repo", id="repo-github")
+            with Horizontal(id="repo-bar-bottom"):
+                yield Input(
+                    placeholder="https://github.com/nomadcoders/ai-agents-masterclass",
+                    id="repo-location",
+                )
+                yield Button("Open", id="repo-open", classes="result-tool result-action")
         with Horizontal(id="body"):
             with Vertical(id="commit-panel"):
                 yield Label("Recent Commits", classes="section-title")
@@ -439,7 +567,9 @@ class CommitQuizApp(App):
                     with Horizontal(classes="row"):
                         with Vertical(classes="option-group"):
                             yield Label("Commit Mode", classes="help-text")
-                            with RadioSet(id="commit-mode", classes="mode-group"):
+                            with RadioSet(
+                                id="commit-mode", classes="mode-group", compact=True
+                            ):
                                 yield RadioButton(
                                     "Auto Fallback", id="mode-auto", value=True
                                 )
@@ -447,7 +577,7 @@ class CommitQuizApp(App):
                                 yield RadioButton("Selected Commit", id="mode-selected")
                         with Vertical(classes="option-group"):
                             yield Label("Difficulty", classes="help-text")
-                            with RadioSet(id="difficulty"):
+                            with RadioSet(id="difficulty", compact=True):
                                 yield RadioButton("Easy", id="difficulty-easy")
                                 yield RadioButton(
                                     "Medium", id="difficulty-medium", value=True
@@ -455,7 +585,7 @@ class CommitQuizApp(App):
                                 yield RadioButton("Hard", id="difficulty-hard")
                         with Vertical(classes="option-group"):
                             yield Label("Style", classes="help-text")
-                            with RadioSet(id="quiz-style"):
+                            with RadioSet(id="quiz-style", compact=True):
                                 yield RadioButton("Mixed", id="style-mixed", value=True)
                                 yield RadioButton(
                                     "Multiple Choice", id="style-multiple_choice"
@@ -466,19 +596,41 @@ class CommitQuizApp(App):
                                 yield RadioButton("Conceptual", id="style-conceptual")
                     yield Label("Additional Request", classes="help-text")
                     yield TextArea(DEFAULT_REQUEST, id="request-input")
-                    yield Button("Generate Quiz", id="generate", variant="primary")
                     yield Static("준비됨", id="status")
                 with Vertical(id="result-panel"):
                     with Horizontal(id="result-header"):
                         yield Label("Quiz Output", classes="section-title")
+                        with Horizontal(id="result-actions-left"):
+                            with Horizontal(id="result-command-group"):
+                                yield Button(
+                                    "Gen",
+                                    id="result-generate",
+                                    classes="result-tool result-action",
+                                )
+                                yield Button(
+                                    "Save",
+                                    id="result-download",
+                                    classes="result-tool result-action",
+                                )
+                                yield Button(
+                                    "Load",
+                                    id="result-load",
+                                    classes="result-tool result-action",
+                                )
                         yield Static("", id="result-header-spacer")
-                        with Horizontal(id="result-actions"):
+                        with Horizontal(id="result-actions-right"):
                             with Horizontal(id="result-mode-group"):
-                                yield Button("md", id="result-mode-markdown", classes="result-tool result-toggle")
+                                yield Button(
+                                    "md",
+                                    id="result-mode-markdown",
+                                    classes="result-tool result-toggle",
+                                )
                                 yield Static("|", classes="result-separator")
-                                yield Button("plain", id="result-mode-plain", classes="result-tool result-toggle")
-                            yield Button("Load", id="result-load", classes="result-tool result-action")
-                            yield Button("Save", id="result-download", classes="result-tool result-action")
+                                yield Button(
+                                    "plain",
+                                    id="result-mode-plain",
+                                    classes="result-tool result-toggle",
+                                )
                     yield LabeledMarkdownViewer(
                         self.result_content,
                         id="result-markdown",
@@ -497,6 +649,7 @@ class CommitQuizApp(App):
         self.set_interval(0.1, self._poll_sigint)
         self.set_interval(AUTO_REFRESH_SECONDS, self._poll_commit_updates)
         self.set_interval(STATUS_ANIMATION_SECONDS, self._animate_status)
+        self._update_repo_context()
         commit_list = self.query_one("#commit-list", ListView)
         if self.commits:
             commit_list.index = 0
@@ -515,6 +668,7 @@ class CommitQuizApp(App):
             items.append(ListItem(Label(self._commit_label_text(index))))
         if self.has_more_commits:
             items.append(ListItem(Label(self._load_more_label_text())))
+            items.append(ListItem(Label(self._load_all_label_text())))
         return items
 
     def _refresh_commit_list_labels(self) -> None:
@@ -523,8 +677,10 @@ class CommitQuizApp(App):
             label_widget = item.query_one(Label)
             if index < len(self.commits):
                 label_widget.update(self._commit_label_text(index))
-            else:
+            elif index == len(self.commits):
                 label_widget.update(self._load_more_label_text())
+            else:
+                label_widget.update(self._load_all_label_text())
 
     def _commit_label_text(self, index: int) -> Text:
         commit = self.commits[index]
@@ -544,6 +700,11 @@ class CommitQuizApp(App):
     def _load_more_label_text(self) -> Text:
         line = Text(" + ", style="bold cyan")
         line.append(f"Load More Commits (+{DEFAULT_COMMIT_LIST_LIMIT})", style="bold")
+        return line
+
+    def _load_all_label_text(self) -> Text:
+        line = Text(" + ", style="bold cyan")
+        line.append("Load All Commits", style="bold")
         return line
 
     def _commit_panel_help_text(self) -> str:
@@ -576,8 +737,12 @@ class CommitQuizApp(App):
         if cached is not None:
             return cached
 
+        repo = get_repo(**self._repo_args(refresh_remote=False))
+        selected_commit = repo.commit(commit["sha"])
         context = build_commit_context(
-            get_commit_by_sha(commit["sha"]), "selected_commit"
+            selected_commit,
+            "selected_commit",
+            repo,
         )
         detail = "\n".join(
             [
@@ -607,6 +772,60 @@ class CommitQuizApp(App):
         if pressed is None:
             return "auto"
         return pressed.id.removeprefix("mode-")
+
+    def _current_repo_source(self) -> str:
+        pressed = self.query_one("#repo-source", RadioSet).pressed_button
+        if pressed is None:
+            return "local"
+        return "github" if pressed.id == "repo-github" else "local"
+
+    def _current_github_repo_url(self) -> str | None:
+        url = self.query_one("#repo-location", Input).value.strip()
+        return url or None
+
+    def _repo_args(self, refresh_remote: bool = True) -> dict:
+        return {
+            "repo_source": self._current_repo_source(),
+            "github_repo_url": self._current_github_repo_url(),
+            "refresh_remote": refresh_remote,
+        }
+
+    def _current_repo_key(self) -> str:
+        repo_source = self._current_repo_source()
+        if repo_source == "local":
+            return "local"
+        return f"github:{self._current_github_repo_url() or ''}"
+
+    def _reset_repo_tracking(self) -> None:
+        self.commit_list_limit = DEFAULT_COMMIT_LIST_LIMIT
+        self._last_seen_head_sha = ""
+        self._last_seen_total_commit_count = 0
+        self._last_seen_repo_key = self._current_repo_key()
+
+    def _load_selected_repo(self, announce: str) -> None:
+        self._update_repo_context()
+        self._reset_repo_tracking()
+        self.commit_detail_cache.clear()
+        self.selected_commit_indices.clear()
+        self.selected_commit_index = 0
+        if (
+            self._current_repo_source() == "github"
+            and not self._current_github_repo_url()
+        ):
+            self.commits = []
+            self.has_more_commits = False
+            self.total_commit_count = 0
+            self._refresh_commit_list_view()
+            self._update_commit_panel_help()
+            self._set_status("GitHub 저장소 URL을 입력해 주세요.")
+            self._set_result("GitHub Repo 모드에서는 저장소 URL이 필요합니다.")
+            return
+        self._show_commit_list_loading("커밋 불러오는 중...")
+        self._set_status("커밋 목록을 불러오는 중...")
+        self._commit_list_loading_enabled = True
+        self._status_animation_frame = 0
+        self.query_one("#repo-open", Button).disabled = True
+        self.load_repo_commits(self._repo_args(), announce, self._current_repo_key())
 
     def _current_difficulty(self) -> str:
         pressed = self.query_one("#difficulty", RadioSet).pressed_button
@@ -658,7 +877,9 @@ class CommitQuizApp(App):
 
     def _download_result(self) -> None:
         extension = "md" if self.result_view_mode == "markdown" else "txt"
-        filename = Path.cwd() / f"quiz-output-{time.strftime('%Y%m%d-%H%M%S')}.{extension}"
+        filename = (
+            Path.cwd() / f"quiz-output-{time.strftime('%Y%m%d-%H%M%S')}.{extension}"
+        )
         filename.write_text(self.result_content, encoding="utf-8")
         self._set_status(f"결과를 저장했습니다: {filename.name}")
         self.notify(
@@ -710,6 +931,24 @@ class CommitQuizApp(App):
     def _set_status(self, content: str) -> None:
         self.query_one("#status", Static).update(content)
 
+    def _update_repo_context(self) -> None:
+        repo_source = self._current_repo_source()
+        repo_location = self.query_one("#repo-location", Input)
+        repo_open = self.query_one("#repo-open", Button)
+        if repo_source == "local":
+            local_repo = get_repo(repo_source="local", refresh_remote=False)
+            local_repo_path = local_repo.working_tree_dir or str(Path.cwd())
+            repo_location.value = local_repo_path
+            repo_location.tooltip = local_repo_path
+            repo_open.label = "Reload"
+        else:
+            local_repo = get_repo(repo_source="local", refresh_remote=False)
+            local_repo_path = local_repo.working_tree_dir or str(Path.cwd())
+            if repo_location.value == local_repo_path:
+                repo_location.value = self.github_repo_url
+            repo_location.tooltip = None
+            repo_open.label = "Open"
+
     def _start_status_animation(self) -> None:
         self._status_animation_enabled = True
         self._result_animation_enabled = True
@@ -721,13 +960,14 @@ class CommitQuizApp(App):
         self._result_animation_enabled = False
 
     def _animate_status(self) -> None:
-        if not self._status_animation_enabled and not self._result_animation_enabled:
+        if (
+            not self._status_animation_enabled
+            and not self._result_animation_enabled
+            and not self._commit_list_loading_enabled
+        ):
             return
-        base = self._status_animation_messages[
-            self._status_animation_frame % len(self._status_animation_messages)
-        ]
         dots = "." * ((self._status_animation_frame % 3) + 1)
-        animated_text = f"{base}{dots}"
+        animated_text = f"{self._status_animation_base}{dots}"
         if self._status_animation_enabled:
             self._set_status(animated_text)
         if self._result_animation_enabled:
@@ -737,10 +977,11 @@ class CommitQuizApp(App):
                         f"## {animated_text}",
                         "",
                         "잠시만 기다려 주세요.",
-                        "최근 커밋과 변경 파일을 읽고 퀴즈를 만들고 있습니다.",
                     ]
                 )
             )
+        if self._commit_list_loading_enabled:
+            self._show_commit_list_loading(f"커밋 불러오는 중{dots}")
         self._status_animation_frame += 1
 
     def _update_commit_panel_help(self) -> None:
@@ -754,19 +995,16 @@ class CommitQuizApp(App):
         for item in self._build_commit_items():
             commit_list.append(item)
 
-    def _restore_selection_after_refresh(self) -> None:
+    def _show_commit_list_loading(self, message: str) -> None:
         commit_list = self.query_one("#commit-list", ListView)
-        if not self.commits:
-            return
+        commit_list.clear()
+        commit_list.append(ListItem(Label(Text(f" {message}", style="bold cyan"))))
 
-        restored_index = min(self.selected_commit_index, len(self.commits) - 1)
-        commit_list.index = restored_index
-        self.selected_commit_index = restored_index
-        self._show_commit_summary(restored_index)
-        self._update_commit_detail(restored_index)
-
-    def _reload_commit_data(
+    def _apply_commit_snapshot(
         self,
+        commits: list[dict[str, str]],
+        has_more_commits: bool,
+        total_commit_count: int,
         announce: str | None = None,
         mark_new_commits: bool = False,
     ) -> None:
@@ -780,9 +1018,9 @@ class CommitQuizApp(App):
         if self.commits and self.selected_commit_index < len(self.commits):
             previously_highlighted_sha = self.commits[self.selected_commit_index]["sha"]
 
-        self.commits = list_recent_commits(limit=self.commit_list_limit)
-        self.has_more_commits = has_more_commits(self.commit_list_limit)
-        self.total_commit_count = count_total_commits()
+        self.commits = commits
+        self.has_more_commits = has_more_commits
+        self.total_commit_count = total_commit_count
         self._last_seen_head_sha = self.commits[0]["sha"] if self.commits else ""
         self._last_seen_total_commit_count = self.total_commit_count
 
@@ -814,20 +1052,74 @@ class CommitQuizApp(App):
         if announce:
             self._set_status(announce)
 
+    def _restore_selection_after_refresh(self) -> None:
+        commit_list = self.query_one("#commit-list", ListView)
+        if not self.commits:
+            return
+
+        restored_index = min(self.selected_commit_index, len(self.commits) - 1)
+        commit_list.index = restored_index
+        self.selected_commit_index = restored_index
+        self._show_commit_summary(restored_index)
+        self._update_commit_detail(restored_index)
+
+    def _reload_commit_data(
+        self,
+        announce: str | None = None,
+        mark_new_commits: bool = False,
+    ) -> None:
+        current_repo_key = self._current_repo_key()
+        if current_repo_key != self._last_seen_repo_key:
+            self.commit_list_limit = DEFAULT_COMMIT_LIST_LIMIT
+            self._last_seen_head_sha = ""
+            self._last_seen_total_commit_count = 0
+            self._last_seen_repo_key = current_repo_key
+        repo_args = self._repo_args()
+        self._update_repo_context()
+        try:
+            snapshot = get_commit_list_snapshot(
+                limit=self.commit_list_limit,
+                **repo_args,
+            )
+        except Exception as exc:
+            self.commits = []
+            self.has_more_commits = False
+            self.total_commit_count = 0
+            self._last_seen_head_sha = ""
+            self._last_seen_total_commit_count = 0
+            self._refresh_commit_list_view()
+            self._update_commit_panel_help()
+            self._set_status("저장소를 불러오지 못했습니다.")
+            self._set_result(str(exc))
+            return
+        self._apply_commit_snapshot(
+            snapshot["commits"],
+            snapshot["has_more_commits"],
+            snapshot["total_commit_count"],
+            announce=announce,
+            mark_new_commits=mark_new_commits,
+        )
+
     def _focus_chain(self) -> list[Widget]:
         return [
+            self.query_one("#repo-source", RadioSet),
+            self.query_one("#repo-location", Input),
+            self.query_one("#repo-open", Button),
             self.query_one("#commit-list", ListView),
             self.query_one("#commit-detail-view", TextArea),
             self.query_one("#commit-mode", RadioSet),
             self.query_one("#difficulty", RadioSet),
             self.query_one("#quiz-style", RadioSet),
+            self.query_one("#result-generate", Button),
+            self.query_one("#result-download", Button),
+            self.query_one("#result-load", Button),
             self.query_one("#result-mode-markdown", Button),
             self.query_one("#result-mode-plain", Button),
-            self.query_one("#result-load", Button),
-            self.query_one("#result-download", Button),
-            self.query_one("#result-markdown", LabeledMarkdownViewer)
-            if self.result_view_mode == "markdown"
-            else self.query_one("#result-plain", TextArea),
+            (
+                self.query_one("#result-markdown", LabeledMarkdownViewer)
+                if self.result_view_mode == "markdown"
+                else self.query_one("#result-plain", TextArea)
+            ),
         ]
 
     def _focus_index_for_widget(self, widget: Widget | None) -> int:
@@ -887,9 +1179,25 @@ class CommitQuizApp(App):
         self.action_confirm_quit()
 
     def _poll_commit_updates(self) -> None:
-        latest = list_recent_commits(limit=1)
-        latest_head_sha = latest[0]["sha"] if latest else ""
-        latest_total = count_total_commits()
+        current_repo_key = self._current_repo_key()
+        if current_repo_key != self._last_seen_repo_key:
+            self._last_seen_repo_key = current_repo_key
+            self._last_seen_head_sha = ""
+            self._last_seen_total_commit_count = 0
+            return
+        repo_args = self._repo_args()
+        try:
+            snapshot = get_commit_list_snapshot(limit=1, **repo_args)
+            latest = snapshot["commits"]
+            latest_head_sha = latest[0]["sha"] if latest else ""
+            latest_total = snapshot["total_commit_count"]
+        except Exception:
+            return
+
+        if not self._last_seen_head_sha or self._last_seen_total_commit_count == 0:
+            self._last_seen_head_sha = latest_head_sha
+            self._last_seen_total_commit_count = latest_total
+            return
 
         if (
             latest_head_sha != self._last_seen_head_sha
@@ -914,6 +1222,14 @@ class CommitQuizApp(App):
             return
         if event.key == "space":
             focused = self.focused
+            if focused is self.query_one("#repo-open", Button):
+                event.stop()
+                self._load_selected_repo("저장소를 불러왔습니다.")
+                return
+            if focused is self.query_one("#result-generate", Button):
+                event.stop()
+                self.action_generate_quiz()
+                return
             if focused is self.query_one("#result-mode-markdown", Button):
                 event.stop()
                 self._set_result_view_mode("markdown")
@@ -935,8 +1251,11 @@ class CommitQuizApp(App):
     def handle_commit_highlight(self, event: ListView.Highlighted) -> None:
         if event.list_view.index is None:
             return
-        if event.list_view.index >= len(self.commits):
+        if event.list_view.index == len(self.commits):
             self._set_status("Space를 눌러 커밋을 더 불러오세요.")
+            return
+        if event.list_view.index == len(self.commits) + 1:
+            self._set_status("Space를 눌러 커밋 전체를 불러오세요.")
             return
         highlighted_sha = self.commits[event.list_view.index]["sha"]
         if highlighted_sha in self.unseen_auto_refresh_commit_shas:
@@ -946,7 +1265,7 @@ class CommitQuizApp(App):
         self._show_commit_summary(self.selected_commit_index)
         self._update_commit_detail(self.selected_commit_index)
 
-    @on(Button.Pressed, "#generate")
+    @on(Button.Pressed, "#result-generate")
     def handle_generate(self) -> None:
         self.action_generate_quiz()
 
@@ -966,14 +1285,52 @@ class CommitQuizApp(App):
     def handle_result_load(self) -> None:
         self._load_result()
 
+    @on(Button.Pressed, "#repo-open")
+    def handle_repo_open(self) -> None:
+        self._load_selected_repo("저장소를 불러왔습니다.")
+
+    @on(RadioSet.Changed, "#repo-source")
+    def handle_repo_source_changed(self) -> None:
+        self._update_repo_context()
+        if (
+            self._current_repo_source() == "github"
+            and not self._current_github_repo_url()
+        ):
+            self.commits = []
+            self.has_more_commits = False
+            self.total_commit_count = 0
+            self._refresh_commit_list_view()
+            self._update_commit_panel_help()
+            self._set_status("GitHub 저장소 URL을 입력해 주세요.")
+            self._set_result("GitHub Repo 모드에서는 저장소 URL이 필요합니다.")
+            return
+        self._load_selected_repo("저장소를 불러왔습니다.")
+
+    @on(Input.Submitted, "#repo-location")
+    def handle_github_repo_url_submitted(self) -> None:
+        self._update_repo_context()
+        if self._current_repo_source() != "github":
+            return
+        self.github_repo_url = self._current_github_repo_url() or ""
+        self._load_selected_repo("GitHub 저장소를 불러왔습니다.")
+
+    @on(Input.Changed, "#repo-location")
+    def handle_github_repo_url_changed(self) -> None:
+        if self._current_repo_source() == "github":
+            self.github_repo_url = self._current_github_repo_url() or ""
+        self._update_repo_context()
+
     def action_toggle_commit_selection(self) -> None:
         if not self.commits:
             return
         index = self.query_one("#commit-list", ListView).index
         if index is None:
             return
-        if index >= len(self.commits):
+        if index == len(self.commits):
             self.action_load_more_commits()
+            return
+        if index == len(self.commits) + 1:
+            self.action_load_all_commits()
             return
         if index in self.selected_commit_indices:
             self.selected_commit_indices.remove(index)
@@ -1000,6 +1357,32 @@ class CommitQuizApp(App):
         else:
             self._set_result(f"커밋 목록을 {loaded_count}개까지 확장했습니다.")
 
+    def action_load_all_commits(self) -> None:
+        self.commit_list_limit = max(self.total_commit_count, DEFAULT_COMMIT_LIST_LIMIT)
+        self._reload_commit_data()
+        self._set_result(f"커밋 전체 {len(self.commits)}개를 불러왔습니다.")
+
+    @work(thread=True)
+    def load_repo_commits(self, repo_args: dict, announce: str, repo_key: str) -> None:
+        try:
+            snapshot = get_commit_list_snapshot(
+                limit=self.commit_list_limit,
+                **repo_args,
+            )
+        except Exception as exc:
+            self.post_message(RepoCommitsFailed(str(exc)))
+            return
+
+        self.post_message(
+            RepoCommitsLoaded(
+                commits=snapshot["commits"],
+                has_more_commits=snapshot["has_more_commits"],
+                total_commit_count=snapshot["total_commit_count"],
+                announce=announce,
+                repo_key=repo_key,
+            )
+        )
+
     def action_generate_quiz(self) -> None:
         if not self.commits:
             self._set_result("표시할 커밋이 없습니다.")
@@ -1007,10 +1390,18 @@ class CommitQuizApp(App):
 
         payload = {
             "messages": [{"role": "user", "content": self._current_request()}],
+            "repo_source": self._current_repo_source(),
             "commit_mode": self._current_commit_mode(),
             "difficulty": self._current_difficulty(),
             "quiz_style": self._current_quiz_style(),
         }
+        github_repo_url = self._current_github_repo_url()
+        if payload["repo_source"] == "github":
+            if not github_repo_url:
+                self._set_status("GitHub 저장소 URL을 입력해 주세요.")
+                self._set_result("GitHub Repo 모드에서는 저장소 URL이 필요합니다.")
+                return
+            payload["github_repo_url"] = github_repo_url
 
         selected_sha = self._selected_commit_sha()
         selected_shas = self._selected_commit_shas()
@@ -1020,7 +1411,7 @@ class CommitQuizApp(App):
             elif selected_sha:
                 payload["requested_commit_sha"] = selected_sha
 
-        self.query_one("#generate", Button).disabled = True
+        self.query_one("#result-generate", Button).disabled = True
         self._start_status_animation()
         self.generate_quiz(payload)
 
@@ -1045,16 +1436,43 @@ class CommitQuizApp(App):
 
     @on(QuizGenerated)
     def handle_quiz_generated(self, message: QuizGenerated) -> None:
-        self.query_one("#generate", Button).disabled = False
+        self.query_one("#result-generate", Button).disabled = False
         self._stop_status_animation()
         self._set_status("완료")
         self._set_result(message.content)
 
     @on(QuizFailed)
     def handle_quiz_failed(self, message: QuizFailed) -> None:
-        self.query_one("#generate", Button).disabled = False
+        self.query_one("#result-generate", Button).disabled = False
         self._stop_status_animation()
         self._set_status("오류")
+        self._set_result(message.error_message)
+
+    @on(RepoCommitsLoaded)
+    def handle_repo_commits_loaded(self, message: RepoCommitsLoaded) -> None:
+        self.query_one("#repo-open", Button).disabled = False
+        self._commit_list_loading_enabled = False
+        self._last_seen_repo_key = message.repo_key
+        self.unseen_auto_refresh_commit_shas.clear()
+        self._apply_commit_snapshot(
+            message.commits,
+            message.has_more_commits,
+            message.total_commit_count,
+            announce=message.announce,
+        )
+
+    @on(RepoCommitsFailed)
+    def handle_repo_commits_failed(self, message: RepoCommitsFailed) -> None:
+        self.query_one("#repo-open", Button).disabled = False
+        self._commit_list_loading_enabled = False
+        self.commits = []
+        self.has_more_commits = False
+        self.total_commit_count = 0
+        self._last_seen_head_sha = ""
+        self._last_seen_total_commit_count = 0
+        self._refresh_commit_list_view()
+        self._update_commit_panel_help()
+        self._set_status("저장소를 불러오지 못했습니다.")
         self._set_result(message.error_message)
 
 
