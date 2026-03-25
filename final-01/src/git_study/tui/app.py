@@ -60,6 +60,7 @@ from .state import (
     save_app_state,
 )
 from .widgets import LabeledMarkdownViewer, ResultLoadScreen
+from .inline_quiz import InlineQuizSavedState, InlineQuizScreen
 
 
 QUIT_CONFIRM_SECONDS = 1.5
@@ -314,6 +315,27 @@ class GitStudyApp(App):
         text-style: bold underline;
     }
 
+    #commit-detail-open-inline-quiz {
+        width: auto;
+        min-width: 7;
+        height: 1;
+        min-height: 1;
+        padding: 0;
+        background: transparent;
+        border: none;
+        color: $success;
+        text-style: bold;
+        margin-left: 1;
+    }
+
+    #commit-detail-open-inline-quiz:hover,
+    #commit-detail-open-inline-quiz:focus {
+        background: transparent;
+        border: none;
+        color: $success;
+        text-style: bold underline;
+    }
+
     #control-panel {
         height: 8;
     }
@@ -524,6 +546,7 @@ class GitStudyApp(App):
         self.selected_range_end_index: int | None = None
         self.unseen_auto_refresh_commit_shas: set[str] = set()
         self.commit_detail_cache: dict[str, str] = {}
+        self._inline_quiz_cache: dict[str, InlineQuizSavedState] = {}
         self.last_quit_attempt_at = 0.0
         self._previous_sigint_handler = None
         self._pending_sigint = False
@@ -597,6 +620,10 @@ class GitStudyApp(App):
                                 yield Button(
                                     "Code",
                                     id="commit-detail-open-code",
+                                )
+                                yield Button(
+                                    "Inline",
+                                    id="commit-detail-open-inline-quiz",
                                 )
                             yield TextArea(
                                 "",
@@ -1304,6 +1331,7 @@ class GitStudyApp(App):
             self.query_one("#repo-open", Button),
             self.query_one("#commit-list", ListView),
             self.query_one("#commit-detail-open-code", Button),
+            self.query_one("#commit-detail-open-inline-quiz", Button),
             self.query_one("#commit-detail-view", TextArea),
             self.query_one("#commit-mode", RadioSet),
             self.query_one("#difficulty", RadioSet),
@@ -1438,6 +1466,10 @@ class GitStudyApp(App):
                 event.stop()
                 self.action_open_code_browser()
                 return
+            if focused is self.query_one("#commit-detail-open-inline-quiz", Button):
+                event.stop()
+                self.action_open_inline_quiz()
+                return
             if focused is self.query_one("#result-generate", Button):
                 event.stop()
                 self.action_generate_quiz()
@@ -1512,6 +1544,10 @@ class GitStudyApp(App):
     @on(Button.Pressed, "#commit-detail-open-code")
     def handle_open_code_browser(self) -> None:
         self.action_open_code_browser()
+
+    @on(Button.Pressed, "#commit-detail-open-inline-quiz")
+    def handle_open_inline_quiz(self) -> None:
+        self.action_open_inline_quiz()
 
     @on(Button.Pressed, "#commit-panel-toggle")
     def handle_commit_panel_toggle(self) -> None:
@@ -1598,6 +1634,7 @@ class GitStudyApp(App):
         self._update_commit_panel_help()
         self._show_commit_summary(index)
         self._reload_code_browser_if_open()
+        self._update_inline_quiz_btn()
 
     def action_open_code_browser(self) -> None:
         if not self.commits:
@@ -1632,6 +1669,71 @@ class GitStudyApp(App):
             newest_commit_sha=newest_commit_sha,
         )
         self._update_workspace_widths()
+
+    def action_open_inline_quiz(self) -> None:
+        if not self.commits:
+            self._set_status("표시할 커밋이 없습니다.")
+            return
+        selected_indices = sorted(self._selected_commit_indices())
+        newest_index = min(selected_indices) if selected_indices else self.selected_commit_index
+        if newest_index >= len(self.commits):
+            self._set_status("커밋을 선택해주세요.")
+            return
+        target_sha = self.commits[newest_index]["sha"]
+        # 캐시 키: 선택된 전체 커밋 SHA 조합 (S와 E 모두 반영)
+        cache_key = ":".join(
+            self.commits[i]["sha"] for i in selected_indices if i < len(self.commits)
+        ) or target_sha
+        repo = get_repo(**self._repo_args(refresh_remote=False))
+        selected_commit = repo.commit(target_sha)
+        commit_context = build_commit_context(selected_commit, "selected_commit", repo)
+        if not commit_context.get("diff_text"):
+            self._set_status("이 커밋에는 텍스트 diff가 없습니다. 다른 커밋을 선택해주세요.")
+            return
+        # 선택이 동일하면 저장된 상태 복원, 아니면 새로 생성
+        saved_state = self._inline_quiz_cache.get(cache_key)
+        screen = InlineQuizScreen(
+            commit_context, repo, target_sha,
+            saved_state=saved_state,
+            cache_key=cache_key,
+        )
+        self.push_screen(screen)
+
+    def save_inline_quiz_state(self, cache_key: str, state: InlineQuizSavedState) -> None:
+        self._inline_quiz_cache[cache_key] = state
+        self._update_inline_quiz_btn()
+
+    def _inline_quiz_cache_key(self) -> str:
+        """현재 선택에 해당하는 캐시 키 반환."""
+        if not self.commits:
+            return ""
+        selected_indices = sorted(self._selected_commit_indices())
+        newest_index = min(selected_indices) if selected_indices else self.selected_commit_index
+        if newest_index >= len(self.commits):
+            return ""
+        return ":".join(
+            self.commits[i]["sha"] for i in selected_indices if i < len(self.commits)
+        ) or self.commits[newest_index]["sha"]
+
+    def _update_inline_quiz_btn(self) -> None:
+        """현재 선택에 따른 캐시 상태를 Inline 버튼 레이블에 표시.
+
+        · 캐시 없음          → "Inline"
+        · 질문 있음, 채점 전  → "Inline ✎"
+        · 채점 완료          → "Inline ✓"
+        """
+        try:
+            btn = self.query_one("#commit-detail-open-inline-quiz", Button)
+        except Exception:
+            return
+        key = self._inline_quiz_cache_key()
+        state = self._inline_quiz_cache.get(key)
+        if state is None or not state.get("questions"):
+            btn.label = "Inline"
+        elif state.get("grades"):
+            btn.label = "Inline ✓"
+        else:
+            btn.label = "Inline ✎"
 
     @on(Button.Pressed, "#code-browser-close")
     def handle_code_browser_close(self) -> None:

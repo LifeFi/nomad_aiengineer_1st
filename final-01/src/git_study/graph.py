@@ -1,4 +1,6 @@
 import hashlib
+import json
+import re
 from pathlib import Path, PurePath
 from typing import Annotated, Literal, NotRequired, TypedDict
 
@@ -653,3 +655,158 @@ graph_builder.add_edge("collect_commit_context", "build_quiz")
 graph_builder.add_edge("build_quiz", END)
 
 graph = graph_builder.compile(name="commit_diff_quiz")
+
+
+# ---------------------------------------------------------------------------
+# Inline Quiz (코드 앵커 퀴즈) — 기존 퀴즈 생성과 별개로 동작
+# ---------------------------------------------------------------------------
+
+class InlineQuizQuestion(TypedDict):
+    id: str
+    file_path: str
+    anchor_snippet: str   # 파일에서 위치를 찾을 3-5줄 코드 조각
+    question: str
+    expected_answer: str
+    question_type: str    # intent | behavior | tradeoff | vulnerability
+
+
+class InlineQuizGrade(TypedDict):
+    id: str
+    score: int
+    feedback: str
+
+
+def _extract_json_block(text: str) -> str:
+    """LLM 응답에서 JSON 배열을 추출한다. 마크다운 코드 블록도 처리."""
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r"(\[[\s\S]*\])", text)
+    if match:
+        return match.group(1)
+    return text.strip()
+
+
+def _extract_file_paths_from_summary(changed_files_summary: str) -> list[str]:
+    """changed_files_summary에서 실제 파일 경로만 파싱해 반환한다.
+
+    형식: "src/foo/bar.py | +10 -5 (lines changed: 15)"
+    """
+    paths: list[str] = []
+    for line in changed_files_summary.strip().splitlines():
+        if "|" in line:
+            path = line.split("|")[0].strip()
+            if path:
+                paths.append(path)
+    return paths
+
+
+def build_inline_quiz_questions(
+    commit_context: dict,
+    count: int = 4,
+) -> list[InlineQuizQuestion]:
+    """커밋 컨텍스트를 바탕으로 소스 코드 특정 위치에 앵커된 퀴즈 질문을 생성한다."""
+    diff_text = commit_context.get("diff_text", "")
+    file_context_text = commit_context.get("file_context_text", "")
+    changed_files_summary = commit_context.get("changed_files_summary", "")
+    commit_subject = commit_context.get("commit_subject", "")
+    commit_sha = str(commit_context.get("commit_sha", ""))[:7]
+
+    # 실제 경로 목록을 명시적으로 구성해 LLM에 전달한다
+    actual_paths = _extract_file_paths_from_summary(changed_files_summary)
+    paths_list = "\n".join(f"  - {p}" for p in actual_paths) or "  (경로 없음)"
+
+    prompt = f"""You are a senior engineer creating inline code quiz questions anchored to specific source code locations.
+
+Commit: {commit_sha} — {commit_subject}
+
+EXACT file paths you MUST use (copy-paste exactly as-is, do NOT add any prefix or suffix):
+{paths_list}
+
+File context (full content of changed files at this commit):
+{file_context_text}
+
+Diff:
+{diff_text}
+
+Task: Create exactly {count} quiz questions. Each question must be anchored to a specific 3-5 line code snippet copied verbatim from the files above.
+
+Return ONLY a raw JSON array (no markdown, no explanation):
+[
+  {{
+    "id": "q1",
+    "file_path": "<use one of the exact paths listed above>",
+    "anchor_snippet": "exact 3-5 consecutive lines verbatim from the file above (preserve indentation)",
+    "question": "질문 내용 (한국어)",
+    "expected_answer": "모범 답안 2-4문장 (한국어)",
+    "question_type": "intent"
+  }}
+]
+
+Rules:
+- file_path MUST be one of the exact paths listed above — do NOT invent or modify paths
+- anchor_snippet MUST be verbatim consecutive lines from file_context_text above (copy-paste exact, including indentation)
+- Cover these question_types across the {count} questions: intent, behavior, tradeoff, vulnerability
+- Questions require code reasoning, not just reading one line
+- Respond with ONLY the JSON array, nothing else
+"""
+
+    llm = get_llm()
+    response = llm.invoke(prompt)
+    raw = _extract_json_block(str(response.content))
+    items = json.loads(raw)
+    return [
+        InlineQuizQuestion(
+            id=q.get("id", f"q{i + 1}"),
+            file_path=q.get("file_path", ""),
+            anchor_snippet=q.get("anchor_snippet", ""),
+            question=q.get("question", ""),
+            expected_answer=q.get("expected_answer", ""),
+            question_type=q.get("question_type", "intent"),
+        )
+        for i, q in enumerate(items)
+    ]
+
+
+def grade_inline_answers(
+    questions: list[InlineQuizQuestion],
+    answers: dict[str, str],
+) -> list[InlineQuizGrade]:
+    """사용자 답변을 LLM으로 채점한다."""
+    blocks: list[str] = []
+    for q in questions:
+        answer = answers.get(q["id"], "").strip()
+        blocks.append(
+            f"\n--- {q['id']} [{q['question_type']}] ---\n"
+            f"코드:\n{q['anchor_snippet'][:300]}\n"
+            f"질문: {q['question']}\n"
+            f"모범 답안: {q['expected_answer']}\n"
+            f"사용자 답변: {answer or '(답변 없음)'}\n"
+        )
+
+    prompt = f"""다음 코드 퀴즈 답변들을 채점해주세요.
+
+{"".join(blocks)}
+
+각 답변에 대해 0-100점 채점과 한국어 피드백을 작성해주세요.
+피드백은 모범 답안과 비교해서 잘한 점과 부족한 점을 구체적으로 써주세요 (2-4문장).
+
+ONLY respond with a raw JSON array (no markdown):
+[
+  {{"id": "q1", "score": 80, "feedback": "피드백 내용"}},
+  ...
+]
+"""
+
+    llm = get_llm()
+    response = llm.invoke(prompt)
+    raw = _extract_json_block(str(response.content))
+    items = json.loads(raw)
+    return [
+        InlineQuizGrade(
+            id=g.get("id", ""),
+            score=int(g.get("score", 0)),
+            feedback=g.get("feedback", ""),
+        )
+        for g in items
+    ]
