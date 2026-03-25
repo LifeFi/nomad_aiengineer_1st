@@ -13,7 +13,6 @@ from textual.widget import Widget
 from textual.widgets import (
     Button,
     Footer,
-    Header,
     Input,
     Label,
     ListItem,
@@ -60,7 +59,7 @@ from .state import (
     save_app_state,
 )
 from .widgets import LabeledMarkdownViewer, ResultLoadScreen
-from .inline_quiz import InlineQuizSavedState, InlineQuizScreen
+from .inline_quiz import InlineQuizDock, InlineQuizSavedState
 
 
 QUIT_CONFIRM_SECONDS = 1.5
@@ -69,9 +68,6 @@ REMOTE_COMMIT_POLL_SECONDS = 30.0
 STATUS_ANIMATION_SECONDS = 0.35
 COMMIT_PANEL_WIDTH = 38
 COMMIT_PANEL_COLLAPSED_WIDTH = 3
-CODE_BROWSER_FIXED_WIDTH = 40
-
-
 class QuizGenerated(Message):
     def __init__(self, content: str, created_at: str) -> None:
         self.content = content
@@ -117,6 +113,35 @@ class GitStudyApp(App):
         layout: vertical;
     }
 
+    #top-bar {
+        height: 3;
+        min-height: 3;
+        width: 1fr;
+        border: none;
+        padding: 0;
+        margin-bottom: 0;
+        background: $panel;
+        align: left middle;
+    }
+
+    #top-bar-title {
+        color: $accent;
+        text-style: bold;
+        width: auto;
+        content-align: left middle;
+    }
+
+    #top-bar-subtitle {
+        color: $text-muted;
+        width: auto;
+        margin-left: 1;
+        content-align: left middle;
+    }
+
+    #top-bar-spacer {
+        width: 1fr;
+    }
+
     #repo-bar {
         height: auto;
         border: round $accent;
@@ -145,6 +170,16 @@ class GitStudyApp(App):
         color: $accent;
         text-style: bold;
         margin-right: 1;
+    }
+
+    #top-toggle-group {
+        width: auto;
+        height: 1;
+        align: right middle;
+    }
+
+    #top-toggle-group > Button {
+        margin-left: 1;
     }
 
     #repo-source {
@@ -194,12 +229,16 @@ class GitStudyApp(App):
     }
 
     #workspace {
+        layout: horizontal;
         height: 1fr;
     }
 
     #left-column {
+        layers: base overlay;
         width: 1fr;
         min-width: 48;
+        layout: vertical;
+        position: relative;
         margin-right: 1;
     }
 
@@ -295,7 +334,8 @@ class GitStudyApp(App):
         width: 1fr;
     }
 
-    #commit-detail-open-code {
+    #commit-detail-open-code,
+    #inline-quiz-open {
         width: auto;
         min-width: 5;
         height: 1;
@@ -308,31 +348,12 @@ class GitStudyApp(App):
     }
 
     #commit-detail-open-code:hover,
-    #commit-detail-open-code:focus {
+    #commit-detail-open-code:focus,
+    #inline-quiz-open:hover,
+    #inline-quiz-open:focus {
         background: transparent;
         border: none;
         color: cyan;
-        text-style: bold underline;
-    }
-
-    #commit-detail-open-inline-quiz {
-        width: auto;
-        min-width: 7;
-        height: 1;
-        min-height: 1;
-        padding: 0;
-        background: transparent;
-        border: none;
-        color: $success;
-        text-style: bold;
-        margin-left: 1;
-    }
-
-    #commit-detail-open-inline-quiz:hover,
-    #commit-detail-open-inline-quiz:focus {
-        background: transparent;
-        border: none;
-        color: $success;
         text-style: bold underline;
     }
 
@@ -504,6 +525,7 @@ class GitStudyApp(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("ctrl+c", "confirm_quit", "Confirm Quit"),
+        ("super+c,ctrl+shift+c", "screen.copy_text", "Copy Selection"),
         ("g", "generate_quiz", "Generate"),
         ("r", "reload_commits", "Reload Commits"),
         ("space", "toggle_commit_selection", "Toggle Commit"),
@@ -567,7 +589,16 @@ class GitStudyApp(App):
         self.commit_panel_collapsed = False
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        with Horizontal(id="top-bar"):
+            yield Label("Git Study", id="top-bar-title")
+            yield Label(
+                "AI can write code. Can you explain it?",
+                id="top-bar-subtitle",
+            )
+            yield Static("", id="top-bar-spacer")
+            with Horizontal(id="top-toggle-group"):
+                yield Button("Quiz", id="inline-quiz-open")
+                yield Button("Code", id="commit-detail-open-code")
         with Horizontal(id="workspace"):
             with Vertical(id="left-column"):
                 with Vertical(id="repo-bar"):
@@ -593,7 +624,7 @@ class GitStudyApp(App):
                             value=self.github_repo_url,
                         )
                         yield Button(
-                            "Open", id="repo-open", classes="result-tool result-action"
+                            "Quiz", id="repo-open", classes="result-tool result-action"
                         )
                 with Horizontal(id="left-body"):
                     with Vertical(id="commit-panel"):
@@ -617,14 +648,6 @@ class GitStudyApp(App):
                             with Horizontal(id="commit-detail-header"):
                                 yield Label("Commit Detail", classes="section-title")
                                 yield Static("", id="commit-detail-header-spacer")
-                                yield Button(
-                                    "Code",
-                                    id="commit-detail-open-code",
-                                )
-                                yield Button(
-                                    "Inline",
-                                    id="commit-detail-open-inline-quiz",
-                                )
                             yield TextArea(
                                 "",
                                 id="commit-detail-view",
@@ -750,6 +773,7 @@ class GitStudyApp(App):
                                 id="result-plain",
                                 read_only=True,
                             )
+                yield InlineQuizDock(id="inline-quiz-dock")
             yield CodeBrowserDock(id="code-browser-dock")
         yield Footer()
 
@@ -768,6 +792,7 @@ class GitStudyApp(App):
             commit_list.focus()
         self._set_result_view_mode(self.result_view_mode)
         self._update_workspace_widths()
+        self._update_top_toggle_buttons()
         self._save_app_state()
 
     def on_unmount(self) -> None:
@@ -780,28 +805,55 @@ class GitStudyApp(App):
     def _update_workspace_widths(self) -> None:
         left_column = self.query_one("#left-column", Vertical)
         code_browser = self.query_one("#code-browser-dock", CodeBrowserDock)
-        if not code_browser.display:
-            left_column.styles.width = "1fr"
-            code_browser.styles.width = "auto"
-            return
-
-        workspace_width = self.size.width
-        commit_panel_width = (
-            COMMIT_PANEL_COLLAPSED_WIDTH
-            if self.commit_panel_collapsed
-            else COMMIT_PANEL_WIDTH
-        )
-        code_browser_fixed_width = code_browser.fixed_panel_width()
-        remaining_width = max(96, workspace_width - commit_panel_width - 4)
-        source_width = max(48, (remaining_width - code_browser_fixed_width) // 2)
-        left_column.styles.width = commit_panel_width + 1 + source_width
-        code_browser.styles.width = source_width + code_browser_fixed_width
+        inline_quiz = self.query_one("#inline-quiz-dock", InlineQuizDock)
+        left_column.styles.width = "1fr"
+        code_browser.styles.width = "1fr" if code_browser.display else "auto"
+        inline_quiz.styles.width = "100%" if inline_quiz.display else "auto"
+        self._update_top_toggle_buttons()
 
     def _reload_code_browser_if_open(self) -> None:
         code_browser = self.query_one("#code-browser-dock", CodeBrowserDock)
         if not code_browser.display:
             return
-        self.action_open_code_browser()
+        selected_indices = sorted(self._selected_commit_indices())
+        if selected_indices:
+            newest_index = min(selected_indices)
+            oldest_index = max(selected_indices)
+        else:
+            newest_index = self.selected_commit_index
+            oldest_index = self.selected_commit_index
+
+        newest_commit_sha = (
+            self.commits[newest_index]["sha"]
+            if newest_index < len(self.commits)
+            else None
+        )
+        oldest_commit_sha = (
+            self.commits[oldest_index]["sha"]
+            if oldest_index < len(self.commits)
+            else newest_commit_sha
+        )
+        if not newest_commit_sha or not oldest_commit_sha:
+            return
+        code_browser.show_range(
+            repo_source=self._current_repo_source(),
+            github_repo_url=self._current_github_repo_url(),
+            oldest_commit_sha=oldest_commit_sha,
+            newest_commit_sha=newest_commit_sha,
+            title_suffix=self._selected_commit_title_suffix(),
+        )
+        self._update_workspace_widths()
+
+    def _reload_inline_quiz_if_open(self) -> None:
+        inline_quiz = self.query_one("#inline-quiz-dock", InlineQuizDock)
+        if not inline_quiz.display:
+            return
+        if not self.commits:
+            inline_quiz.show_placeholder("커밋을 선택한 뒤 Open을 눌러 인라인 퀴즈를 생성해 주세요.")
+            self._update_top_toggle_buttons()
+            self._update_workspace_widths()
+            return
+        self._show_inline_quiz()
 
     def _build_commit_items(self) -> list[ListItem]:
         items: list[ListItem] = []
@@ -1047,6 +1099,20 @@ class GitStudyApp(App):
             self.selected_range_end_index,
         )
 
+    def _selected_commit_title_suffix(self) -> str:
+        if not self.commits:
+            return ""
+        if self.selected_range_start_index is not None:
+            start_commit = self.commits[self.selected_range_start_index]
+            if self.selected_range_end_index is None:
+                return f"S {start_commit['short_sha']}"
+            end_commit = self.commits[self.selected_range_end_index]
+            return f"S {start_commit['short_sha']} -> E {end_commit['short_sha']}"
+        if self.selected_commit_index < len(self.commits):
+            commit = self.commits[self.selected_commit_index]
+            return f"S {commit['short_sha']}"
+        return ""
+
     def _result_metadata_block(self, extension: str, created_at: str | None = None) -> str:
         selected_indices = sorted(self._selected_commit_indices())
         selected_commits = [
@@ -1165,14 +1231,14 @@ class GitStudyApp(App):
             local_repo_path = local_repo.working_tree_dir or str(Path.cwd())
             repo_location.value = local_repo_path
             repo_location.tooltip = local_repo_path
-            repo_open.label = "Reload"
+            repo_open.label = "Quiz"
         else:
             local_repo = get_repo(repo_source="local", refresh_remote=False)
             local_repo_path = local_repo.working_tree_dir or str(Path.cwd())
             if repo_location.value == local_repo_path:
                 repo_location.value = self.github_repo_url
             repo_location.tooltip = None
-            repo_open.label = "Open"
+            repo_open.label = "Quiz"
         self._save_app_state()
 
     def _start_status_animation(self) -> None:
@@ -1273,6 +1339,7 @@ class GitStudyApp(App):
         self.selected_commit_index = restored_index
         self._show_commit_summary(restored_index)
         self._update_commit_detail(restored_index)
+        self._reload_inline_quiz_if_open()
 
     def _reload_commit_data(
         self,
@@ -1326,12 +1393,12 @@ class GitStudyApp(App):
 
     def _focus_chain(self) -> list[Widget]:
         return [
+            self.query_one("#inline-quiz-open", Button),
+            self.query_one("#commit-detail-open-code", Button),
             self.query_one("#repo-source", RadioSet),
             self.query_one("#repo-location", Input),
             self.query_one("#repo-open", Button),
             self.query_one("#commit-list", ListView),
-            self.query_one("#commit-detail-open-code", Button),
-            self.query_one("#commit-detail-open-inline-quiz", Button),
             self.query_one("#commit-detail-view", TextArea),
             self.query_one("#commit-mode", RadioSet),
             self.query_one("#difficulty", RadioSet),
@@ -1466,10 +1533,6 @@ class GitStudyApp(App):
                 event.stop()
                 self.action_open_code_browser()
                 return
-            if focused is self.query_one("#commit-detail-open-inline-quiz", Button):
-                event.stop()
-                self.action_open_inline_quiz()
-                return
             if focused is self.query_one("#result-generate", Button):
                 event.stop()
                 self.action_generate_quiz()
@@ -1494,6 +1557,10 @@ class GitStudyApp(App):
                 event.stop()
                 self._toggle_result_metadata()
                 return
+            if focused is self.query_one("#inline-quiz-open", Button):
+                event.stop()
+                self.action_open_inline_quiz()
+                return
 
     @on(ListView.Highlighted, "#commit-list")
     def handle_commit_highlight(self, event: ListView.Highlighted) -> None:
@@ -1512,6 +1579,7 @@ class GitStudyApp(App):
         self.selected_commit_index = event.list_view.index
         self._show_commit_summary(self.selected_commit_index)
         self._update_commit_detail(self.selected_commit_index)
+        self._reload_inline_quiz_if_open()
 
     @on(Button.Pressed, "#result-generate")
     def handle_generate(self) -> None:
@@ -1545,7 +1613,7 @@ class GitStudyApp(App):
     def handle_open_code_browser(self) -> None:
         self.action_open_code_browser()
 
-    @on(Button.Pressed, "#commit-detail-open-inline-quiz")
+    @on(Button.Pressed, "#inline-quiz-open")
     def handle_open_inline_quiz(self) -> None:
         self.action_open_inline_quiz()
 
@@ -1634,9 +1702,15 @@ class GitStudyApp(App):
         self._update_commit_panel_help()
         self._show_commit_summary(index)
         self._reload_code_browser_if_open()
-        self._update_inline_quiz_btn()
+        self._reload_inline_quiz_if_open()
+        self._update_top_toggle_buttons()
 
     def action_open_code_browser(self) -> None:
+        code_browser = self.query_one("#code-browser-dock", CodeBrowserDock)
+        if code_browser.display:
+            code_browser.hide_panel()
+            self._update_workspace_widths()
+            return
         if not self.commits:
             self._set_status("표시할 커밋이 없습니다.")
             return
@@ -1661,23 +1735,38 @@ class GitStudyApp(App):
         if not newest_commit_sha or not oldest_commit_sha:
             self._set_status("코드 브라우저를 열 커밋이 없습니다.")
             return
-        code_browser = self.query_one("#code-browser-dock", CodeBrowserDock)
         code_browser.show_range(
             repo_source=self._current_repo_source(),
             github_repo_url=self._current_github_repo_url(),
             oldest_commit_sha=oldest_commit_sha,
             newest_commit_sha=newest_commit_sha,
+            title_suffix=self._selected_commit_title_suffix(),
         )
         self._update_workspace_widths()
 
     def action_open_inline_quiz(self) -> None:
+        inline_quiz = self.query_one("#inline-quiz-dock", InlineQuizDock)
+        if inline_quiz.display:
+            inline_quiz.hide_panel()
+            self._after_inline_quiz_closed()
+            return
+        self._show_inline_quiz()
+
+    def _show_inline_quiz(self) -> None:
+        inline_quiz = self.query_one("#inline-quiz-dock", InlineQuizDock)
         if not self.commits:
+            inline_quiz.show_placeholder("표시할 커밋이 없습니다.")
             self._set_status("표시할 커밋이 없습니다.")
+            self._update_workspace_widths()
+            self._update_top_toggle_buttons()
             return
         selected_indices = sorted(self._selected_commit_indices())
         newest_index = min(selected_indices) if selected_indices else self.selected_commit_index
         if newest_index >= len(self.commits):
+            inline_quiz.show_placeholder("커밋을 선택한 뒤 Open을 눌러 인라인 퀴즈를 생성해 주세요.")
             self._set_status("커밋을 선택해주세요.")
+            self._update_workspace_widths()
+            self._update_top_toggle_buttons()
             return
         target_sha = self.commits[newest_index]["sha"]
         # 캐시 키: 선택된 전체 커밋 SHA 조합 (S와 E 모두 반영)
@@ -1688,20 +1777,26 @@ class GitStudyApp(App):
         selected_commit = repo.commit(target_sha)
         commit_context = build_commit_context(selected_commit, "selected_commit", repo)
         if not commit_context.get("diff_text"):
+            inline_quiz.show_placeholder("텍스트 diff가 있는 커밋을 선택하면 인라인 퀴즈를 생성할 수 있습니다.")
             self._set_status("이 커밋에는 텍스트 diff가 없습니다. 다른 커밋을 선택해주세요.")
+            self._update_workspace_widths()
+            self._update_top_toggle_buttons()
             return
-        # 선택이 동일하면 저장된 상태 복원, 아니면 새로 생성
         saved_state = self._inline_quiz_cache.get(cache_key)
-        screen = InlineQuizScreen(
-            commit_context, repo, target_sha,
+        inline_quiz.show_quiz(
+            commit_context=commit_context,
+            repo=repo,
+            target_commit_sha=target_sha,
+            title_suffix=self._selected_commit_title_suffix(),
             saved_state=saved_state,
             cache_key=cache_key,
         )
-        self.push_screen(screen)
+        self._update_workspace_widths()
+        self._update_top_toggle_buttons()
 
     def save_inline_quiz_state(self, cache_key: str, state: InlineQuizSavedState) -> None:
         self._inline_quiz_cache[cache_key] = state
-        self._update_inline_quiz_btn()
+        self._update_top_toggle_buttons()
 
     def _inline_quiz_cache_key(self) -> str:
         """현재 선택에 해당하는 캐시 키 반환."""
@@ -1715,25 +1810,22 @@ class GitStudyApp(App):
             self.commits[i]["sha"] for i in selected_indices if i < len(self.commits)
         ) or self.commits[newest_index]["sha"]
 
-    def _update_inline_quiz_btn(self) -> None:
-        """현재 선택에 따른 캐시 상태를 Inline 버튼 레이블에 표시.
-
-        · 캐시 없음          → "Inline"
-        · 질문 있음, 채점 전  → "Inline ✎"
-        · 채점 완료          → "Inline ✓"
-        """
+    def _update_top_toggle_buttons(self) -> None:
         try:
-            btn = self.query_one("#commit-detail-open-inline-quiz", Button)
+            quiz_btn = self.query_one("#inline-quiz-open", Button)
+            code_btn = self.query_one("#commit-detail-open-code", Button)
         except Exception:
             return
-        key = self._inline_quiz_cache_key()
-        state = self._inline_quiz_cache.get(key)
-        if state is None or not state.get("questions"):
-            btn.label = "Inline"
-        elif state.get("grades"):
-            btn.label = "Inline ✓"
-        else:
-            btn.label = "Inline ✎"
+        code_browser = self.query_one("#code-browser-dock", CodeBrowserDock)
+        inline_quiz = self.query_one("#inline-quiz-dock", InlineQuizDock)
+        quiz_btn.label = "Quiz ▲" if inline_quiz.display else "Quiz ▼"
+        code_btn.label = "Code ▲" if code_browser.display else "Code ▼"
+        quiz_btn.set_class(inline_quiz.display, "-active")
+        code_btn.set_class(code_browser.display, "-active")
+
+    def _after_inline_quiz_closed(self) -> None:
+        self._update_workspace_widths()
+        self._update_top_toggle_buttons()
 
     @on(Button.Pressed, "#code-browser-close")
     def handle_code_browser_close(self) -> None:

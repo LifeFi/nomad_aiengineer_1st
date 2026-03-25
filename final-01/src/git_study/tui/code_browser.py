@@ -3,9 +3,6 @@ from difflib import SequenceMatcher, unified_diff
 from pygments import highlight
 from pygments.formatters import Terminal256Formatter
 from pygments.lexers import TextLexer, get_lexer_by_name
-from rich.console import Group
-from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -56,16 +53,17 @@ def compute_diff_annotations(
     return added_target_lines, replaced_target_lines, removed_chunks, removed_base_lines
 
 
-def build_current_renderable(language: str, base_content: str, target_content: str):
-    syntax = Syntax(
-        target_content or "\n",
-        language or "text",
-        theme="monokai",
-        line_numbers=True,
-        word_wrap=False,
-        indent_guides=True,
-    )
-    return Group(syntax)
+def build_current_text(language: str, target_content: str) -> Text:
+    highlighted_target_lines = highlight_code_lines(target_content, language)
+    rendered = Text(no_wrap=True)
+    for line_number, line in enumerate(highlighted_target_lines, start=1):
+        rendered.append(f"{line_number:4} ", style="dim")
+        rendered.append("  ", style="dim")
+        rendered.append_text(line)
+        rendered.append("\n")
+    if not rendered.plain.strip():
+        rendered.append("파일 내용을 표시할 수 없습니다.\n", style="dim")
+    return rendered
 
 
 def format_line_ranges(lines: list[int]) -> str:
@@ -83,60 +81,54 @@ def format_line_ranges(lines: list[int]) -> str:
     return ", ".join(ranges)
 
 
-def build_diff_renderable(path: str, language: str, base_content: str, target_content: str):
+def build_diff_text_renderable(
+    path: str,
+    language: str,
+    base_content: str,
+    target_content: str,
+) -> Text:
     added_target_lines, replaced_target_lines, removed_chunks, removed_base_lines = compute_diff_annotations(
         base_content,
         target_content,
     )
 
-    legend = Text()
-    legend.append(" A added ", style="black on green4")
-    legend.append("  ")
-    legend.append(" M changed ", style="black on dark_olive_green3")
-    legend.append("  ")
-    legend.append(" D removed ", style="red")
-
-    summary = Text()
-    summary.append(
+    rendered = Text(no_wrap=True)
+    rendered.append(" A added ", style="black on green4")
+    rendered.append("  ")
+    rendered.append(" M changed ", style="black on dark_olive_green3")
+    rendered.append("  ")
+    rendered.append(" D removed ", style="red")
+    rendered.append("\n")
+    rendered.append(
         f"added: {format_line_ranges(sorted(added_target_lines))}",
         style="green",
     )
-    summary.append("    ")
-    summary.append(
+    rendered.append("    ")
+    rendered.append(
         f"changed: {format_line_ranges(sorted(replaced_target_lines))}",
         style="yellow",
     )
-    summary.append("    ")
-    summary.append(
+    rendered.append("    ")
+    rendered.append(
         f"removed: {format_line_ranges(sorted(removed_base_lines))}",
         style="red",
     )
-
-    renderables = [
-        legend,
-        summary,
-        Panel(
-            render_current_code_text(language, base_content, target_content),
-            title=f"Diff  ({language or 'text'})",
-            border_style="green",
-            padding=(0, 1),
-        ),
-    ]
+    rendered.append("\n\n")
+    rendered.append(f"Diff ({language or 'text'})  {path}", style="bold cyan")
+    rendered.append("\n\n")
+    rendered.append_text(render_current_code_text(language, base_content, target_content))
 
     if removed_chunks:
         removed_preview = "\n\n".join(removed_chunks[:3])
         if len(removed_chunks) > 3:
             removed_preview += f"\n\n... {len(removed_chunks) - 3} more removed chunks"
-        renderables.append(
-            Panel(
-                Text(removed_preview, style="red"),
-                title="Removed In Range",
-                border_style="red",
-                padding=(0, 1),
-            )
-        )
+        rendered.append("\n\n")
+        rendered.append("Removed In Range", style="bold red")
+        rendered.append("\n\n")
+        rendered.append(removed_preview, style="red")
+        rendered.append("\n")
 
-    return Group(*renderables)
+    return rendered
 
 
 def render_current_code_text(language: str, base_content: str, target_content: str) -> Text:
@@ -286,26 +278,6 @@ class CodeBrowserDock(Vertical):
         width: 1fr;
     }
 
-    #code-browser-close {
-        width: auto;
-        min-width: 5;
-        height: 1;
-        min-height: 1;
-        padding: 0;
-        background: transparent;
-        border: none;
-        color: cyan;
-        text-style: bold;
-    }
-
-    #code-browser-close:hover,
-    #code-browser-close:focus {
-        background: transparent;
-        border: none;
-        color: cyan;
-        text-style: bold underline;
-    }
-
     #code-browser-body {
         height: 1fr;
         margin-top: 0;
@@ -401,18 +373,19 @@ class CodeBrowserDock(Vertical):
 
     .code-view-toggle {
         width: auto;
-        min-width: 4;
-        height: auto;
+        min-width: 6;
+        height: 1;
         min-height: 1;
-        padding: 0;
+        max-height: 1;
+        padding: 0 1;
         margin: 0;
         background: transparent;
         border: none;
         outline: none;
         tint: transparent;
-        color: $text-muted;
+        color: $text;
         content-align: center middle;
-        text-style: none;
+        text-style: bold;
     }
 
     #code-view-mode-separator {
@@ -428,18 +401,19 @@ class CodeBrowserDock(Vertical):
         border: none;
         outline: none;
         tint: transparent;
-        color: $text;
+        color: cyan;
         text-style: bold underline;
     }
 
     .code-view-toggle.active-toggle {
-        height: auto;
+        height: 1;
         min-height: 1;
+        max-height: 1;
         background: transparent;
         border: none;
         outline: none;
         tint: transparent;
-        color: $success;
+        color: cyan;
         text-style: bold;
     }
 
@@ -448,7 +422,8 @@ class CodeBrowserDock(Vertical):
         background: transparent;
         border: none;
         outline: none;
-        color: $success;
+        tint: transparent;
+        color: cyan;
         text-style: bold underline;
     }
 
@@ -464,7 +439,8 @@ class CodeBrowserDock(Vertical):
     }
 
     #code-view-content {
-        width: 1fr;
+        width: auto;
+        height: auto;
         padding: 1;
     }
     """
@@ -489,7 +465,6 @@ class CodeBrowserDock(Vertical):
             with Horizontal(id="code-browser-header"):
                 yield Label("Code Browser", id="code-browser-title")
                 yield Static("", id="code-browser-header-spacer")
-                yield Button("Hide", id="code-browser-close")
             with Horizontal(id="code-browser-body"):
                 with Vertical(id="code-file-panel"):
                     with Horizontal(id="code-file-header"):
@@ -503,13 +478,13 @@ class CodeBrowserDock(Vertical):
                         yield Label("Source View", id="code-view-title")
                         yield Static("", id="code-view-header-spacer")
                         with Horizontal(id="code-view-mode-group"):
-                            yield Button(
+                            yield Static(
                                 "Diff",
                                 id="code-view-mode-diff",
                                 classes="code-view-toggle active-toggle",
                             )
                             yield Static("|", id="code-view-mode-separator")
-                            yield Button(
+                            yield Static(
                                 "Current",
                                 id="code-view-mode-current",
                                 classes="code-view-toggle",
@@ -529,6 +504,7 @@ class CodeBrowserDock(Vertical):
         github_repo_url: str | None,
         oldest_commit_sha: str,
         newest_commit_sha: str,
+        title_suffix: str = "",
     ) -> None:
         self.repo_source = repo_source
         self.github_repo_url = github_repo_url
@@ -552,7 +528,7 @@ class CodeBrowserDock(Vertical):
         self.current_file_path = None
         self.display = True
         self.query_one("#code-browser-title", Label).update(
-            f"Code Browser  {self.oldest_commit_sha[:7]} -> {self.target_commit_sha[:7]}"
+            f"Code Browser  {title_suffix}".rstrip()
         )
         self._populate_tree()
 
@@ -640,21 +616,19 @@ class CodeBrowserDock(Vertical):
         else:
             subtitle += "  |  unchanged"
         self.query_one("#code-view-subtitle", Static).update(subtitle)
+        content = self.query_one("#code-view-content", Static)
         if self.view_mode == "diff":
-            renderable = build_diff_renderable(
-                path, language, base_content, target_content
+            content.update(
+                build_diff_text_renderable(path, language, base_content, target_content)
             )
         else:
-            renderable = build_current_renderable(
-                language, base_content, target_content
-            )
-        self.query_one("#code-view-content", Static).update(renderable)
+            content.update(build_current_text(language, target_content))
         self.query_one("#code-view-scroll", VerticalScroll).scroll_home(animate=False)
 
     def _set_view_mode(self, mode: str) -> None:
         self.view_mode = mode
-        diff_button = self.query_one("#code-view-mode-diff", Button)
-        current_button = self.query_one("#code-view-mode-current", Button)
+        diff_button = self.query_one("#code-view-mode-diff", Static)
+        current_button = self.query_one("#code-view-mode-current", Static)
         if mode == "diff":
             diff_button.add_class("active-toggle")
             current_button.remove_class("active-toggle")
@@ -670,12 +644,6 @@ class CodeBrowserDock(Vertical):
         if not path or path not in self.file_paths:
             return
         self._show_file(path)
-
-    @on(Button.Pressed, "#code-browser-close")
-    def handle_close(self) -> None:
-        self.hide_panel()
-        if hasattr(self.app, "_update_workspace_widths"):
-            self.app.call_after_refresh(self.app._update_workspace_widths)
 
     @on(Button.Pressed, "#code-file-toggle")
     def handle_file_panel_toggle(self) -> None:
@@ -693,10 +661,10 @@ class CodeBrowserDock(Vertical):
         self.handle_file_panel_toggle()
         event.stop()
 
-    @on(Button.Pressed, "#code-view-mode-diff")
+    @on(Click, "#code-view-mode-diff")
     def handle_view_mode_diff(self) -> None:
         self._set_view_mode("diff")
 
-    @on(Button.Pressed, "#code-view-mode-current")
+    @on(Click, "#code-view-mode-current")
     def handle_view_mode_current(self) -> None:
         self._set_view_mode("current")
