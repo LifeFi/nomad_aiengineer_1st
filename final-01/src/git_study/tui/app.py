@@ -68,6 +68,8 @@ REMOTE_COMMIT_POLL_SECONDS = 30.0
 STATUS_ANIMATION_SECONDS = 0.35
 COMMIT_PANEL_WIDTH = 38
 COMMIT_PANEL_COLLAPSED_WIDTH = 3
+
+
 class QuizGenerated(Message):
     def __init__(self, content: str, created_at: str) -> None:
         self.content = content
@@ -592,7 +594,7 @@ class GitStudyApp(App):
         with Horizontal(id="top-bar"):
             yield Label("Git Study", id="top-bar-title")
             yield Label(
-                "AI can write code. Can you explain it?",
+                "AI writes code. Can you explain it?",
                 id="top-bar-subtitle",
             )
             yield Static("", id="top-bar-spacer")
@@ -659,7 +661,9 @@ class GitStudyApp(App):
                                 with Vertical(classes="option-group"):
                                     yield Label("Commit Mode", classes="help-text")
                                     with RadioSet(
-                                        id="commit-mode", classes="mode-group", compact=True
+                                        id="commit-mode",
+                                        classes="mode-group",
+                                        compact=True,
                                     ):
                                         yield RadioButton(
                                             "Auto Fallback",
@@ -703,18 +707,22 @@ class GitStudyApp(App):
                                             value=self.saved_quiz_style == "mixed",
                                         )
                                         yield RadioButton(
-                                            "Study Session", id="style-study_session"
-                                            , value=self.saved_quiz_style == "study_session"
+                                            "Study Session",
+                                            id="style-study_session",
+                                            value=self.saved_quiz_style
+                                            == "study_session",
                                         )
                                         yield RadioButton(
                                             "Multiple Choice",
                                             id="style-multiple_choice",
-                                            value=self.saved_quiz_style == "multiple_choice",
+                                            value=self.saved_quiz_style
+                                            == "multiple_choice",
                                         )
                                         yield RadioButton(
                                             "Short Answer",
                                             id="style-short_answer",
-                                            value=self.saved_quiz_style == "short_answer",
+                                            value=self.saved_quiz_style
+                                            == "short_answer",
                                         )
                                         yield RadioButton(
                                             "Conceptual",
@@ -849,7 +857,9 @@ class GitStudyApp(App):
         if not inline_quiz.display:
             return
         if not self.commits:
-            inline_quiz.show_placeholder("커밋을 선택한 뒤 Open을 눌러 인라인 퀴즈를 생성해 주세요.")
+            inline_quiz.show_placeholder(
+                "커밋을 선택한 뒤 Open을 눌러 인라인 퀴즈를 생성해 주세요."
+            )
             self._update_top_toggle_buttons()
             self._update_workspace_widths()
             return
@@ -1098,7 +1108,8 @@ class GitStudyApp(App):
 
     def _selected_commit_shas(self) -> list[str]:
         return [
-            self.commits[index]["sha"] for index in sorted(self._selected_commit_indices())
+            self.commits[index]["sha"]
+            for index in sorted(self._selected_commit_indices())
         ]
 
     def _clear_selected_range(self) -> None:
@@ -1126,10 +1137,14 @@ class GitStudyApp(App):
             return f"S {commit['short_sha']}"
         return ""
 
-    def _result_metadata_block(self, extension: str, created_at: str | None = None) -> str:
+    def _result_metadata_block(
+        self, extension: str, created_at: str | None = None
+    ) -> str:
         selected_indices = sorted(self._selected_commit_indices())
         selected_commits = [
-            self.commits[index] for index in selected_indices if index < len(self.commits)
+            self.commits[index]
+            for index in selected_indices
+            if index < len(self.commits)
         ]
         highlighted_commit = (
             self.commits[self.selected_commit_index]
@@ -1186,7 +1201,10 @@ class GitStudyApp(App):
     def _download_result(self) -> None:
         extension = "md" if self.result_view_mode == "markdown" else "txt"
         QUIZ_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        filename = QUIZ_OUTPUT_DIR / f"quiz-output-{time.strftime('%Y%m%d-%H%M%S')}.{extension}"
+        filename = (
+            QUIZ_OUTPUT_DIR
+            / f"quiz-output-{time.strftime('%Y%m%d-%H%M%S')}.{extension}"
+        )
         file_content = result_content_for_save(self.result_content, extension)
         filename.write_text(file_content, encoding="utf-8")
         self._set_status(f"결과를 저장했습니다: {filename.name}")
@@ -1534,7 +1552,9 @@ class GitStudyApp(App):
             commit_list = self.query_one("#commit-list", ListView)
             if self.focused is commit_list and len(commit_list.children) > 0:
                 event.stop()
-                commit_list.index = 0 if event.key == "pageup" else len(commit_list.children) - 1
+                commit_list.index = (
+                    0 if event.key == "pageup" else len(commit_list.children) - 1
+                )
             return
         if event.key == "space":
             focused = self.focused
@@ -1774,24 +1794,37 @@ class GitStudyApp(App):
             self._update_top_toggle_buttons()
             return
         selected_indices = sorted(self._selected_commit_indices())
-        newest_index = min(selected_indices) if selected_indices else self.selected_commit_index
+        newest_index = (
+            min(selected_indices) if selected_indices else self.selected_commit_index
+        )
         if newest_index >= len(self.commits):
-            inline_quiz.show_placeholder("커밋을 선택한 뒤 Open을 눌러 인라인 퀴즈를 생성해 주세요.")
+            inline_quiz.show_placeholder(
+                "커밋을 선택한 뒤 Open을 눌러 인라인 퀴즈를 생성해 주세요."
+            )
             self._set_status("커밋을 선택해주세요.")
             self._update_workspace_widths()
             self._update_top_toggle_buttons()
             return
         target_sha = self.commits[newest_index]["sha"]
         # 캐시 키: 선택된 전체 커밋 SHA 조합 (S와 E 모두 반영)
-        cache_key = ":".join(
-            self.commits[i]["sha"] for i in selected_indices if i < len(self.commits)
-        ) or target_sha
+        cache_key = (
+            ":".join(
+                self.commits[i]["sha"]
+                for i in selected_indices
+                if i < len(self.commits)
+            )
+            or target_sha
+        )
         repo = get_repo(**self._repo_args(refresh_remote=False))
         selected_commit = repo.commit(target_sha)
         commit_context = build_commit_context(selected_commit, "selected_commit", repo)
         if not commit_context.get("diff_text"):
-            inline_quiz.show_placeholder("텍스트 diff가 있는 커밋을 선택하면 인라인 퀴즈를 생성할 수 있습니다.")
-            self._set_status("이 커밋에는 텍스트 diff가 없습니다. 다른 커밋을 선택해주세요.")
+            inline_quiz.show_placeholder(
+                "텍스트 diff가 있는 커밋을 선택하면 인라인 퀴즈를 생성할 수 있습니다."
+            )
+            self._set_status(
+                "이 커밋에는 텍스트 diff가 없습니다. 다른 커밋을 선택해주세요."
+            )
             self._update_workspace_widths()
             self._update_top_toggle_buttons()
             return
@@ -1807,7 +1840,9 @@ class GitStudyApp(App):
         self._update_workspace_widths()
         self._update_top_toggle_buttons()
 
-    def save_inline_quiz_state(self, cache_key: str, state: InlineQuizSavedState) -> None:
+    def save_inline_quiz_state(
+        self, cache_key: str, state: InlineQuizSavedState
+    ) -> None:
         self._inline_quiz_cache[cache_key] = state
         self._update_top_toggle_buttons()
 
@@ -1816,12 +1851,19 @@ class GitStudyApp(App):
         if not self.commits:
             return ""
         selected_indices = sorted(self._selected_commit_indices())
-        newest_index = min(selected_indices) if selected_indices else self.selected_commit_index
+        newest_index = (
+            min(selected_indices) if selected_indices else self.selected_commit_index
+        )
         if newest_index >= len(self.commits):
             return ""
-        return ":".join(
-            self.commits[i]["sha"] for i in selected_indices if i < len(self.commits)
-        ) or self.commits[newest_index]["sha"]
+        return (
+            ":".join(
+                self.commits[i]["sha"]
+                for i in selected_indices
+                if i < len(self.commits)
+            )
+            or self.commits[newest_index]["sha"]
+        )
 
     def _update_top_toggle_buttons(self) -> None:
         try:

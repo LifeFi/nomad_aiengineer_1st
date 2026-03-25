@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="sky" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f7d794" />
+      <stop offset="50%" stop-color="#f3a683" />
+      <stop offset="100%" stop-color="#778beb" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#sky)" />
+  <circle cx="160" cy="160" r="82" fill="#fff3b0" opacity="0.85" />
+  <rect x="96" y="660" width="832" height="220" rx="28" fill="#fffaf0" opacity="0.92" />
+  <text x="96" y="120" font-family="Georgia, serif" font-size="42" fill="#fffaf0">2페이지</text>
+  <text x="96" y="200" font-family="Georgia, serif" font-size="56" fill="#ffffff">Toby's Incredible Iron Adventure</text>
+  <text x="96" y="740" font-family="Arial, sans-serif" font-size="30" fill="#4a3f35">토비는 햇볕이 비치는 마당에서 스스로 만든 철의 옷을 입고 양팔을 벌린 채 하늘을 바라봅니다. 옷에는 반짝이는 금속 패널과 밝은 불빛이 있어서 멋지게 보입니다.</text>
+</svg>

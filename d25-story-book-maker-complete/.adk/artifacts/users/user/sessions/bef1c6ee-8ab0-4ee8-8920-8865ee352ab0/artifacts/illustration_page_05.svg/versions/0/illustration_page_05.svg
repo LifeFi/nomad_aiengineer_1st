@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="sky" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f7d794" />
+      <stop offset="50%" stop-color="#f3a683" />
+      <stop offset="100%" stop-color="#778beb" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#sky)" />
+  <circle cx="160" cy="160" r="82" fill="#fff3b0" opacity="0.85" />
+  <rect x="96" y="660" width="832" height="220" rx="28" fill="#fffaf0" opacity="0.92" />
+  <text x="96" y="120" font-family="Georgia, serif" font-size="42" fill="#fffaf0">5페이지</text>
+  <text x="96" y="200" font-family="Georgia, serif" font-size="56" fill="#ffffff">Toby's Incredible Iron Adventure</text>
+  <text x="96" y="740" font-family="Arial, sans-serif" font-size="30" fill="#4a3f35">리즈와 토비가 손을 맞잡고 환히 웃고 있는 모습. 놀라운 하루를 보낸 후 토비의 집 앞에서 행복한 친구들이며, 거리는 저녁 햇살로 물들어 있습니다.</text>
+</svg>
