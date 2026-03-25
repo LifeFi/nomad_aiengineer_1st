@@ -956,12 +956,24 @@ class GitStudyApp(App):
             "selected_commit",
             repo,
         )
-        detail = "\n".join(
+        message_lines = selected_commit.message.splitlines()
+        body = "\n".join(message_lines[1:]).strip() if len(message_lines) > 1 else ""
+        detail_lines = [
+            f"SHA: {context['commit_sha']}",
+            f"Subject: {context['commit_subject']}",
+            f"Author: {context['commit_author']}",
+            f"Date: {context['commit_date']}",
+        ]
+        if body:
+            detail_lines.extend(
+                [
+                    "",
+                    "[Body]",
+                    body,
+                ]
+            )
+        detail_lines.extend(
             [
-                f"SHA: {context['commit_sha']}",
-                f"Subject: {context['commit_subject']}",
-                f"Author: {context['commit_author']}",
-                f"Date: {context['commit_date']}",
                 "",
                 "[Changed Files]",
                 context["changed_files_summary"] or "No changed files.",
@@ -971,6 +983,7 @@ class GitStudyApp(App):
                 or "텍스트 diff가 없습니다. 이 커밋은 바이너리 파일 변경이거나 코드 hunk가 없는 변경일 수 있습니다.",
             ]
         )
+        detail = "\n".join(detail_lines)
         self.commit_detail_cache[commit["sha"]] = detail
         return detail
 
