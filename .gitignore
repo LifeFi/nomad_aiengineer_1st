@@ -23,3 +23,6 @@ final-01/.langgraph_api/
 final-01/memory.db
 
 final-01/.git-study/
+
+# ADK runtime databases
+**/.adk/session.db
